@@ -9,6 +9,7 @@ import {
 } from 'firebase/auth';
 import { auth } from '../firebase/config';
 import { firestoreService } from '../services/firestoreService';
+import { ensureSuperAdminBootstrapped, BOOTSTRAP_SUPER_ADMIN_EMAIL } from '../services/superAdminBootstrap';
 import { User, Hotel, UserRole } from '../types';
 
 interface AuthContextType {
@@ -42,6 +43,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [allHotels, setAllHotels] = useState<Hotel[]>([]);
   const [selectedTenantId, setSelectedTenantIdState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [bootstrapSettled, setBootstrapSettled] = useState<boolean>(false);
+
+  // One-time super admin bootstrap — runs BEFORE the login screen appears.
+  // Silently ensures the first super_admin account exists (skips forever once
+  // one exists). Never blocks the app on failure.
+  useEffect(() => {
+    let cancelled = false;
+    ensureSuperAdminBootstrapped()
+      .catch((err) => console.warn('[super-admin-bootstrap] skipped:', err?.message))
+      .finally(() => {
+        if (!cancelled) setBootstrapSettled(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Check URL token for Guest Room QR scan
   useEffect(() => {
@@ -69,8 +86,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         hotelId = tokenResult.claims.hotelId as string | undefined;
       }
 
-      // Default role fallback if email is super admin email
-      if (!role && (fbUser.email?.toLowerCase() === 'admin@raees.com' || fbUser.email?.toLowerCase() === 'ra7650384@gmail.com')) {
+      // Bootstrap-created admin: claim may not be set yet (no Cloud Functions on
+      // the free plan) — ask the app server (Admin SDK) to attach it, then re-read.
+      if (!role && fbUser.email?.toLowerCase() === BOOTSTRAP_SUPER_ADMIN_EMAIL) {
         try {
           await firestoreService.bootstrapSuperAdmin(fbUser.email);
           tokenResult = await fbUser.getIdTokenResult(true);
@@ -268,7 +286,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         guestRoomToken,
         setGuestRoomToken,
         allHotels,
-        isLoading,
+        // Keep the splash visible until the one-time bootstrap check settles
+        isLoading: isLoading || !bootstrapSettled,
         selectedTenantId,
         setSelectedTenantId,
         loginWithCredentials,

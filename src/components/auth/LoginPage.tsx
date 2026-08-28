@@ -1,6 +1,5 @@
 import React, { useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { firestoreService } from '../../services/firestoreService';
 import {
   Lock,
   Mail,
@@ -8,8 +7,6 @@ import {
   EyeOff,
   ArrowRight,
   AlertCircle,
-  KeyRound,
-  CheckCircle2,
   Zap,
   Building2,
   BedDouble,
@@ -23,17 +20,14 @@ export const LoginPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isIdentityToolkitError, setIsIdentityToolkitError] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setIsIdentityToolkitError(false);
-    setSuccessMessage(null);
     setLoading(true);
 
     try {
@@ -75,28 +69,6 @@ export const LoginPage: React.FC = () => {
       setErrorMessage(msg);
     } finally {
       setGoogleLoading(false);
-    }
-  };
-
-  // Helper for initial Super Admin setup
-  const handleSetupSuperAdmin = async () => {
-    setBootstrapLoading(true);
-    setErrorMessage(null);
-    setIsIdentityToolkitError(false);
-    setSuccessMessage(null);
-    try {
-      await firestoreService.bootstrapSuperAdmin('admin@raees.com', 'admin123');
-      setEmail('admin@raees.com');
-      setPassword('admin123');
-      setSuccessMessage('Super Admin initialized! Click "Sign In" to access the Super Admin Panel.');
-    } catch (err: any) {
-      let msg = err.message || 'Failed to initialize Super Admin account.';
-      if (msg.includes('identitytoolkit.googleapis.com') || msg.includes('Identity Toolkit API')) {
-        setIsIdentityToolkitError(true);
-      }
-      setErrorMessage(msg);
-    } finally {
-      setBootstrapLoading(false);
     }
   };
 
@@ -196,13 +168,8 @@ export const LoginPage: React.FC = () => {
                 </div>
               )}
 
-              {/* Success banner */}
-              {successMessage && (
-                <div className="bg-[#e7efee] border border-[#c9dcd9] rounded-lg p-3.5 text-xs text-[#0e3030] flex items-start gap-2.5">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-teal-mid" />
-                  <span className="font-medium">{successMessage}</span>
-                </div>
-              )}
+              {/* Success banner — the first super admin is created automatically
+                  on app startup; nothing to sync manually anymore. */}
 
               {/* Error banner */}
               {errorMessage && !isIdentityToolkitError && (
@@ -226,7 +193,7 @@ export const LoginPage: React.FC = () => {
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="admin@raees.com or hotel admin email"
+                      placeholder="Admin email (or hotel admin email)"
                       className="input-super pl-9 pr-3 py-2.5"
                     />
                   </div>
@@ -345,19 +312,6 @@ export const LoginPage: React.FC = () => {
                       <ArrowRight className="w-3 h-3 text-ink-faint" />
                     </div>
                     <div className="t-caption text-ink-mute">Rooms, POS &amp; Operations</div>
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-between t-caption text-ink-mute pt-1">
-                  <span>Cloud Admin Bootstrap:</span>
-                  <button
-                    type="button"
-                    onClick={handleSetupSuperAdmin}
-                    disabled={bootstrapLoading}
-                    className="text-primary-deep hover:underline font-bold inline-flex items-center gap-1"
-                  >
-                    <KeyRound className="w-3 h-3" />
-                    {bootstrapLoading ? 'Initializing…' : 'Sync admin@raees.com'}
                   </button>
                 </div>
               </div>

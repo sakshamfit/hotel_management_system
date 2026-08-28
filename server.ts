@@ -19,6 +19,10 @@ if (!getApps().length) {
 
 const adminAuth = getAuth();
 
+// The only account the (unauthenticated) bootstrap endpoint may configure.
+// Must match BOOTSTRAP_SUPER_ADMIN_EMAIL in src/services/superAdminBootstrap.ts.
+const BOOTSTRAP_SUPER_ADMIN_EMAIL = 'ra7650384@gmail.com';
+
 // Middleware to verify Firebase ID token and super_admin claim
 async function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
@@ -57,10 +61,18 @@ async function startServer() {
   });
 
   // Bootstrap Super Admin Endpoint
-  // Allows setting up or setting custom claims for the master super_admin account
+  // Configures ONLY the platform's designated bootstrap super admin account.
+  // Any other email is rejected so the open endpoint cannot be used to grant
+  // super_admin claims to arbitrary accounts.
   app.post('/api/auth/bootstrap-super-admin', async (req: Request, res: Response) => {
-    const { email = 'admin@raees.com', password = 'admin', name = 'Master Super Admin (Raees HQ)' } = req.body;
+    const { email = BOOTSTRAP_SUPER_ADMIN_EMAIL, password, name = 'Master Super Admin' } = req.body;
     const targetEmail = (email || '').toLowerCase().trim();
+
+    if (targetEmail !== BOOTSTRAP_SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({
+        error: 'Forbidden: this endpoint only configures the platform bootstrap super admin account.',
+      });
+    }
 
     try {
       let userRecord: UserRecord;
@@ -70,7 +82,7 @@ async function startServer() {
         // User does not exist, create it
         userRecord = await adminAuth.createUser({
           email: targetEmail,
-          password: password.length >= 6 ? password : 'admin123',
+          password: typeof password === 'string' && password.length >= 6 ? password : 'admin123',
           displayName: name,
           emailVerified: true,
         });

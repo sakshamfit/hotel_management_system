@@ -19,6 +19,8 @@ import {
   MapPin,
   Globe,
   Sparkles,
+  Copy,
+  Check,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -74,13 +76,25 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
     requireCallConfirmation: false,
   });
 
-  // Step 4: Hotel Admin Account (Email & Password for login)
+  // Step 4: Hotel Admin Account (Email & Password for login).
+  // The password is ONLY ever sent to Firebase Auth (via the server endpoint)
+  // — it is never written to Firestore. It is shown to the super admin exactly
+  // once right after creation, then discarded from memory.
   const [adminName, setAdminName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminPhone, setAdminPhone] = useState('');
 
+  // One-time credentials reveal after successful creation
+  const [revealedCredentials, setRevealedCredentials] = useState<{
+    hotelName: string;
+    email: string;
+    password: string;
+  } | null>(null);
+  const [passwordCopied, setPasswordCopied] = useState(false);
+
   if (!isOpen) return null;
+
 
   const validateStep1 = () => {
     if (!hotelName.trim()) return 'Hotel Name is required.';
@@ -164,6 +178,9 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         currencySymbol,
         timezone,
         status: 'active',
+        // loginEmail is stored for reference in the admin panel; the password
+        // is deliberately NOT persisted anywhere in Firestore.
+        loginEmail: adminEmail.trim(),
         branding: {
           logoUrl: '',
           coverImageUrl: '',
@@ -243,8 +260,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         // Confetti optional
       }
 
-      onSuccess();
-      onClose();
+      // Show the generated credentials exactly ONCE — the password lives only
+      // in this component's memory and is cleared when the admin closes this.
+      setRevealedCredentials({
+        hotelName: hotelName.trim(),
+        email: adminEmail.trim(),
+        password: adminPassword,
+      });
     } catch (err: any) {
       console.error('Error creating hotel:', err);
       setError(err.message || 'Failed to provision hotel. Please check details and try again.');
@@ -252,6 +274,93 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
       setIsSubmitting(false);
     }
   };
+
+  const handleFinishReveal = () => {
+    // Discard the password from memory — it is not retrievable anywhere after this.
+    setRevealedCredentials(null);
+    setPasswordCopied(false);
+    onSuccess();
+    onClose();
+  };
+
+  const handleCopyPassword = async () => {
+    if (!revealedCredentials) return;
+    try {
+      await navigator.clipboard.writeText(revealedCredentials.password);
+      setPasswordCopied(true);
+      setTimeout(() => setPasswordCopied(false), 2000);
+    } catch {
+      // Clipboard API unavailable — admin can still select the text manually
+    }
+  };
+
+  // One-time credentials reveal — replaces the wizard immediately after the
+  // hotel account is created. The password exists only in this screen.
+  if (revealedCredentials) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+        <div className="bg-canvas rounded-xl w-full max-w-md p-6 space-y-5 shadow-2xl border border-hairline">
+          <div className="text-center space-y-3">
+            <div className="w-14 h-14 rounded-xl bg-teal-tint border border-teal-line text-teal-deep flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-7 h-7" />
+            </div>
+            <h2 className="t-display-md">{revealedCredentials.hotelName} is live</h2>
+            <p className="t-caption text-ink-mute">
+              The hotel admin account was created in Firebase Auth. Save the password now — it will
+              not be shown again.
+            </p>
+          </div>
+
+          <div className="card-feature-row p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="t-caption text-ink-mute shrink-0">Login Email</span>
+              <span className="font-mono font-semibold text-ink text-xs truncate">
+                {revealedCredentials.email}
+              </span>
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="t-caption text-ink-mute">Password</span>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 bg-canvas border border-hairline rounded-lg px-3 py-2.5 font-mono text-sm text-ink select-all truncate">
+                  {revealedCredentials.password}
+                </code>
+                <button
+                  type="button"
+                  onClick={handleCopyPassword}
+                  className="btn-primary-dark px-3.5 py-2.5 text-xs shrink-0"
+                >
+                  {passwordCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" /> Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" /> Copy
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <p className="t-micro text-ink-faint flex items-center gap-1.5">
+              <Lock className="w-3 h-3" />
+              Stored only in Firebase Auth — never in the database.
+            </p>
+          </div>
+
+          <div className="bg-violet-tint border border-violet-soft rounded-lg px-3.5 py-2.5 text-xs text-primary-deep flex items-start gap-2 font-medium">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>Save this password now — it will not be shown again.</span>
+          </div>
+
+          <button type="button" onClick={handleFinishReveal} className="btn-primary-dark w-full py-3">
+            I&rsquo;ve Saved It — Done
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">

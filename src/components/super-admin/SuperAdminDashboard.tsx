@@ -23,6 +23,7 @@ import {
   Mail,
   Phone,
   Trash2,
+  KeyRound,
 } from 'lucide-react';
 
 export const SuperAdminDashboard: React.FC = () => {
@@ -31,6 +32,7 @@ export const SuperAdminDashboard: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [resettingId, setResettingId] = useState<string | null>(null);
 
   const filteredHotels = allHotels.filter((h) => {
     const matchesSearch =
@@ -50,6 +52,27 @@ export const SuperAdminDashboard: React.FC = () => {
   const handleLaunchHotelOS = (hotelId: string) => {
     switchHotelTenant(hotelId);
     setActiveExperience('hotel_os');
+  };
+
+  // Forgot-password flow: email a Firebase reset link to the hotel admin.
+  // (The app never stores or knows the password — only Firebase Auth can reset it.)
+  const handleResetPassword = async (h: Hotel) => {
+    const email = h.loginEmail || h.adminCredentials?.email || h.email;
+    if (!email) {
+      alert('No login email is set for this hotel.');
+      return;
+    }
+    if (!window.confirm(`Send a password reset email to ${email}?`)) return;
+
+    try {
+      setResettingId(h.id);
+      await firestoreService.sendHotelPasswordReset(email);
+      alert(`Password reset email sent to ${email}. The hotel admin can set a new password from that link.`);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to send the reset email. Please try again.');
+    } finally {
+      setResettingId(null);
+    }
   };
 
   const handleDeleteHotel = async (h: Hotel) => {
@@ -297,7 +320,7 @@ export const SuperAdminDashboard: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Hotel Admin Login Credentials Card */}
+                      {/* Hotel Admin Login Credentials Card (email only — the password lives exclusively in Firebase Auth) */}
                       <div className="p-3 bg-[#fafaf8] border border-[#e8e4dd] rounded-lg text-xs space-y-1.5">
                         <div className="text-[10px] font-bold text-[#73706d] uppercase flex items-center justify-between">
                           <span>Admin Login Profile</span>
@@ -306,7 +329,7 @@ export const SuperAdminDashboard: React.FC = () => {
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-[#73706d]">Email:</span>
                           <span className="font-mono font-bold text-[#292827] truncate max-w-[180px]">
-                            {h.adminCredentials?.email || h.email}
+                            {h.loginEmail || h.adminCredentials?.email || h.email}
                           </span>
                         </div>
                         <div className="flex items-center justify-between text-[11px]">
@@ -332,6 +355,15 @@ export const SuperAdminDashboard: React.FC = () => {
                       className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-sm transition-colors"
                     >
                       <Eye className="w-3.5 h-3.5" /> Launch Dashboard
+                    </button>
+
+                    <button
+                      onClick={() => handleResetPassword(h)}
+                      disabled={resettingId === h.id}
+                      title="Reset Password (emails a reset link to the hotel admin)"
+                      className="p-2.5 rounded-full bg-white hover:bg-[#ece6fb] text-[#73706d] hover:text-[#1b1938] border border-[#e8e4dd] hover:border-[#c9b4fa] transition-colors disabled:opacity-50"
+                    >
+                      <KeyRound className="w-4 h-4" />
                     </button>
 
                     <button

@@ -14,6 +14,7 @@ import {
   Timestamp,
   Unsubscribe,
 } from 'firebase/firestore';
+import { sendPasswordResetEmail } from 'firebase/auth';
 import { db, auth } from '../firebase/config';
 import {
   Hotel,
@@ -441,5 +442,14 @@ export const firestoreService = {
       throw new Error(data.error || 'Failed to setup super admin');
     }
     return data;
+  },
+
+  /**
+   * Emails a password reset link to a hotel admin account. Works on the free
+   * plan (no Cloud Functions needed) — the raw password is never known to the
+   * app; only Firebase Auth can reset it.
+   */
+  sendHotelPasswordReset: async (email: string) => {
+    await sendPasswordResetEmail(auth, email.trim());
   },
 };

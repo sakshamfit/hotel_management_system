@@ -20,6 +20,21 @@ service cloud.firestore {
         );
     }
 
+    // users collection — marker documents for admin accounts.
+    // Public read is required so the one-time super admin bootstrap can check,
+    // BEFORE anyone signs in, whether a super_admin already exists. These docs
+    // contain only { role, email, createdAt } and grant NO data access — all
+    // authorization is custom-claims based (see isSuperAdmin / isHotelAdmin).
+    match /users/{uid} {
+      allow get, list: if true;
+      allow create: if isAuthenticated()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['role', 'email', 'createdAt'])
+        && request.resource.data.role is string
+        && request.resource.data.email is string;
+      allow update, delete: if isSuperAdmin();
+    }
+
     // Hotel documents
     match /hotels/{hotelId} {
       // Super admin has full read/write on all hotels

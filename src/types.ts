@@ -65,6 +65,8 @@ export interface Hotel {
   currencySymbol: string; // "₹", "$", "AED ", "€"
   timezone: string; // "Asia/Kolkata", "America/New_York", etc.
   status: HotelStatus | string;
+  /** Login email for the hotel's admin account (Firebase Auth). Password is NEVER stored — only in Firebase Auth. */
+  loginEmail?: string;
   branding: HotelBranding;
   modules: HotelModules;
   roomsCount?: number;
