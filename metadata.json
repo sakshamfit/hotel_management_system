@@ -1,0 +1,6 @@
+{
+  "name": "NEXORA HOTEL OS",
+  "description": "Enterprise Multi-Tenant Hotel Operating System and Premium Guest Experience Platform",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

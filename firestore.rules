@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && 
+        request.auth.token.role == 'super_admin';
+    }
+
+    function isHotelAdmin(hotelId) {
+      return isAuthenticated() && 
+        (
+          request.auth.token.role == 'super_admin' || 
+          (request.auth.token.role == 'hotel_admin' && request.auth.token.hotelId == hotelId)
+        );
+    }
+
+    // Hotel documents
+    match /hotels/{hotelId} {
+      // Super admin has full read/write on all hotels
+      // Hotel admin can read and update their own hotel profile
+      allow read: if isSuperAdmin() || isHotelAdmin(hotelId);
+      allow create, delete: if isSuperAdmin();
+      allow update: if isSuperAdmin() || isHotelAdmin(hotelId);
+
+      // All subcollections under a specific hotel
+      match /{subcollection}/{document=**} {
+        allow read, write: if isHotelAdmin(hotelId);
+      }
+    }
+
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if isSuperAdmin();
+    }
+  }
+}

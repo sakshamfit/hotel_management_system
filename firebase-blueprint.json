@@ -1,0 +1,116 @@
+{
+  "entities": {
+    "hotels": {
+      "title": "Hotel",
+      "description": "Hotel tenant entity in multi-tenant system",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "hotelCode": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "country": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "currency": { "type": "string" },
+        "timezone": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "trial", "suspended"] },
+        "adminEmail": { "type": "string" },
+        "adminName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "address", "phone", "email"]
+    },
+    "rooms": {
+      "title": "Room",
+      "description": "Room subcollection under hotels/{hotelId}/rooms",
+      "type": "object",
+      "properties": {
+        "roomNumber": { "type": "string" },
+        "type": { "type": "string" },
+        "floor": { "type": "string" },
+        "pricePerNight": { "type": "number" },
+        "status": { "type": "string", "enum": ["vacant", "occupied", "cleaning", "maintenance"] },
+        "qrCodeToken": { "type": "string" },
+        "guestName": { "type": "string" }
+      },
+      "required": ["roomNumber", "type", "status"]
+    },
+    "foodItems": {
+      "title": "Food Item",
+      "description": "Menu subcollection under hotels/{hotelId}/foodItems",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "description": { "type": "string" },
+        "isAvailable": { "type": "boolean" },
+        "isVeg": { "type": "boolean" }
+      },
+      "required": ["name", "category", "price"]
+    },
+    "services": {
+      "title": "Service",
+      "description": "Amenities & services subcollection under hotels/{hotelId}/services",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "description": { "type": "string" },
+        "isAvailable": { "type": "boolean" }
+      },
+      "required": ["name", "category"]
+    },
+    "orders": {
+      "title": "Order / Service Request",
+      "description": "Live orders subcollection under hotels/{hotelId}/orders",
+      "type": "object",
+      "properties": {
+        "roomNumber": { "type": "string" },
+        "guestName": { "type": "string" },
+        "type": { "type": "string", "enum": ["food", "service", "housekeeping", "concierge"] },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["roomNumber", "type", "status"]
+    },
+    "bookings": {
+      "title": "Guest Check-in / Booking",
+      "description": "Bookings subcollection under hotels/{hotelId}/bookings",
+      "type": "object",
+      "properties": {
+        "guestName": { "type": "string" },
+        "guestEmail": { "type": "string" },
+        "guestPhone": { "type": "string" },
+        "roomNumber": { "type": "string" },
+        "checkInDate": { "type": "string" },
+        "checkOutDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["checked_in", "checked_out", "reserved"] },
+        "adults": { "type": "number" },
+        "totalAmount": { "type": "number" }
+      },
+      "required": ["guestName", "roomNumber", "checkInDate", "status"]
+    },
+    "staff": {
+      "title": "Staff Member",
+      "description": "Staff subcollection under hotels/{hotelId}/staff",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "shift": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "on_leave", "off_duty"] }
+      },
+      "required": ["name", "role"]
+    }
+  }
+}
