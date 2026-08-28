@@ -1,13 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
-  Building2,
-  ShieldCheck,
-  Smartphone,
-  LogOut,
   Globe2,
   ArrowLeft,
   User,
+  LogOut,
 } from 'lucide-react';
 
 export const Header: React.FC = () => {
@@ -36,9 +33,9 @@ export const Header: React.FC = () => {
   const isSuperAdmin = user?.role === 'super_admin';
 
   return (
-    <header className="bg-white text-[#222222] border-b border-[#ebebeb] sticky top-0 z-40 shadow-xs">
+    <header className="bg-canvas text-ink border-b border-hairline sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-18">
+        <div className="flex items-center justify-between h-16">
           {/* Logo and Hotel Branding */}
           <div className="flex items-center gap-4">
             <div
@@ -52,74 +49,69 @@ export const Header: React.FC = () => {
               }}
             >
               <div
-                className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm text-white font-bold text-base transition-transform"
-                style={{
-                  backgroundColor: hotel?.branding?.primaryColor || '#ff385c',
-                }}
+                className="w-9 h-9 rounded-lg flex items-center justify-center text-on-primary font-bold text-base"
+                style={{ backgroundColor: hotel?.branding?.primaryColor || '#1b1938' }}
               >
                 {hotel?.name ? hotel.name.charAt(0) : 'N'}
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-bold tracking-tight text-base text-[#222222]">
+                  <span className="t-heading-lg text-ink tracking-tight" style={{ fontSize: 16 }}>
                     {hotel ? hotel.name : 'NEXORA HOTEL OS'}
                   </span>
-                  <span className="text-[10px] font-bold uppercase bg-[#fff0f3] text-[#ff385c] border border-[#ffd1da] px-2 py-0.5 rounded-full font-mono">
+                  <span className="font-mono text-[10px] font-semibold uppercase tracking-wide bg-violet-tint text-primary-deep border border-violet-soft rounded px-1.5 py-0.5">
                     {isSuperAdmin ? 'Super Admin' : (hotel?.hotelCode || 'Hotel Admin')}
                   </span>
                 </div>
-                <p className="text-[11px] text-[#6a6a6a]">
+                <p className="t-caption text-ink-mute" style={{ fontSize: 11 }}>
                   {hotel?.city ? `${hotel.city}, ${hotel.country}` : 'Cloud Multi-Tenant Hospitality Platform'}
                 </p>
               </div>
             </div>
 
-            {/* Back to Super Admin HQ button (if super admin is inspecting a hotel) */}
+            {/* Back to Super Admin HQ (if super admin is inspecting a hotel) */}
             {isSuperAdmin && activeExperience === 'hotel_os' && (
               <button
                 onClick={() => {
                   switchHotelTenant('');
                   setActiveExperience('super_admin');
                 }}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#f7f7f7] hover:bg-[#ebebeb] text-[#222222] border border-[#dddddd] text-xs font-semibold transition-colors ml-3"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-canvas-soft hover:bg-[#f1efe9] text-ink border border-hairline text-xs font-semibold transition-colors ml-3"
               >
                 <ArrowLeft className="w-3.5 h-3.5" /> Back to Super Admin HQ
               </button>
             )}
           </div>
 
-          {/* Right Section: Timezone Clock, User Profile & Logout */}
+          {/* Right: Timezone clock, profile, sign out */}
           <div className="flex items-center gap-3">
-            {/* Live Clock with Timezone */}
             {hotel && (
-              <div className="hidden md:flex items-center gap-1.5 bg-[#f7f7f7] border border-[#ebebeb] px-3 py-1.5 rounded-full text-xs font-mono text-[#3f3f3f]">
-                <Globe2 className="w-3.5 h-3.5 text-[#ff385c]" />
+              <div className="hidden md:flex items-center gap-1.5 bg-canvas-soft border border-hairline px-3 py-1.5 rounded-lg text-xs font-mono text-ink">
+                <Globe2 className="w-3.5 h-3.5 text-teal-mid" />
                 <span>{timeString}</span>
-                <span className="text-[10px] text-[#6a6a6a] font-sans uppercase">
+                <span className="text-[10px] text-ink-faint font-sans uppercase">
                   ({hotel.timezone?.split('/')[1] || 'EST'})
                 </span>
               </div>
             )}
 
-            {/* User Profile Info */}
-            <div className="flex items-center gap-2 bg-[#f7f7f7] border border-[#ebebeb] px-3 py-1.5 rounded-full">
-              <div className="w-6 h-6 rounded-full bg-[#222222] text-white flex items-center justify-center text-[10px] font-bold">
+            <div className="flex items-center gap-2 bg-canvas-soft border border-hairline px-3 py-1.5 rounded-lg">
+              <div className="w-6 h-6 rounded-full bg-primary text-on-primary flex items-center justify-center text-[10px] font-bold">
                 <User className="w-3.5 h-3.5" />
               </div>
               <div className="text-left hidden sm:block">
-                <div className="text-[11px] font-bold text-[#222222] leading-tight truncate max-w-[140px]">
+                <div className="text-[11px] font-bold text-ink leading-tight truncate max-w-[140px]">
                   {user?.name || user?.email}
                 </div>
-                <div className="text-[9px] text-[#6a6a6a] font-mono leading-none">
+                <div className="text-[9px] text-ink-faint font-mono leading-none">
                   {user?.role === 'super_admin' ? 'super_admin' : 'hotel_admin'}
                 </div>
               </div>
             </div>
 
-            {/* Sign Out Button */}
             <button
               onClick={logout}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-full border border-[#dddddd] hover:border-[#222222] text-xs font-semibold text-[#6a6a6a] hover:text-[#222222] transition-colors"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-hairline hover:border-hairline-dark text-xs font-semibold text-ink-mute hover:text-ink transition-colors"
               title="Sign Out"
             >
               <LogOut className="w-3.5 h-3.5" />

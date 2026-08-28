@@ -22,14 +22,14 @@ const MainAppContent: React.FC = () => {
       setGuestRoomToken(tokenParam);
       setActiveExperience('guest_experience');
     }
-  }, [setActiveExperience, setGuestRoomToken]);
+  }, [setGuestRoomToken, setActiveExperience]);
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
+      <div className="min-h-screen bg-canvas flex items-center justify-center">
         <div className="text-center space-y-3">
-          <div className="w-10 h-10 border-3 border-[#ff385c] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-semibold text-[#6a6a6a]">Loading Nexora Platform...</p>
+          <div className="w-10 h-10 border-[3px] border-primary border-t-transparent rounded-lg animate-spin mx-auto" />
+          <p className="t-caption text-ink-mute">Loading Nexora Platform…</p>
         </div>
       </div>
     );
@@ -38,7 +38,7 @@ const MainAppContent: React.FC = () => {
   // If in guest experience (e.g. scanning QR code in a hotel room)
   if (activeExperience === 'guest_experience') {
     return (
-      <div className="min-h-screen bg-white text-[#222222] flex flex-col font-sans">
+      <div className="min-h-screen bg-canvas text-ink flex flex-col font-sans">
         <Header />
         <div className="flex-1">
           <GuestRoomView />
@@ -53,7 +53,7 @@ const MainAppContent: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-white text-[#222222] flex flex-col font-sans selection:bg-[#ffd1da] selection:text-[#ff385c]">
+    <div className="min-h-screen bg-canvas text-ink flex flex-col font-sans selection:bg-violet-soft/40 selection:text-primary-deep">
       <Header />
       <div className="flex-1">
         {activeExperience === 'super_admin' && <SuperAdminDashboard />}

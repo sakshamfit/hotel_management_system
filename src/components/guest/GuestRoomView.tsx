@@ -205,10 +205,10 @@ export const GuestRoomView: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#fafafa] flex items-center justify-center p-6">
+      <div className="min-h-screen bg-[#fafaf8] flex items-center justify-center p-6">
         <div className="text-center space-y-3">
-          <div className="w-10 h-10 border-3 border-[#ff385c] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-semibold text-[#6a6a6a]">Connecting to room experience...</p>
+          <div className="w-10 h-10 border-3 border-[#1b1938] border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs font-semibold text-[#73706d]">Connecting to room experience...</p>
         </div>
       </div>
     );
@@ -216,11 +216,11 @@ export const GuestRoomView: React.FC = () => {
 
   if (!hotel) {
     return (
-      <div className="min-h-screen bg-[#fafafa] flex items-center justify-center p-6">
-        <div className="bg-white border border-[#ebebeb] p-8 rounded-3xl max-w-sm text-center space-y-3 shadow-xs">
-          <BedDouble className="w-10 h-10 text-[#ff385c] mx-auto" />
-          <h3 className="text-base font-bold text-[#222222]">No Hotel Configured</h3>
-          <p className="text-xs text-[#6a6a6a]">
+      <div className="min-h-screen bg-[#fafaf8] flex items-center justify-center p-6">
+        <div className="bg-white border border-[#e8e4dd] p-8 rounded-xl max-w-sm text-center space-y-3 shadow-xs">
+          <BedDouble className="w-10 h-10 text-[#1b1938] mx-auto" />
+          <h3 className="text-base font-bold text-[#292827]">No Hotel Configured</h3>
+          <p className="text-xs text-[#73706d]">
             Please provision a hotel from the Super Admin panel to test the guest room experience.
           </p>
         </div>
@@ -238,39 +238,41 @@ export const GuestRoomView: React.FC = () => {
   });
 
   return (
-    <div className="min-h-screen bg-[#fafafa] pb-24 text-[#222222]">
-      {/* Hotel & In-Room Header */}
-      <div className="bg-white border-b border-[#ebebeb] px-4 py-5 sticky top-18 z-20 shadow-xs">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-canvas-soft pb-24 text-ink">
+      {/* Hotel & In-Room Header — the indigo hero band with violet-sky atmosphere */}
+      <div className="atmosphere relative px-4 py-7 sm:py-9 sticky top-16 z-20 overflow-hidden">
+        {/* soft violet glow accent */}
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(42%_90%_at_82%_10%,rgba(201,180,250,0.28)_0%,rgba(201,180,250,0)_70%)]" />
+        <div className="max-w-3xl mx-auto flex items-center justify-between relative">
+          <div className="flex items-center gap-3.5">
             <div
-              className="w-11 h-11 rounded-2xl flex items-center justify-center text-white font-bold text-base shadow-sm"
-              style={{ backgroundColor: hotel.branding?.primaryColor || '#ff385c' }}
+              className="w-11 h-11 rounded-lg flex items-center justify-center text-on-primary font-bold text-base"
+              style={{ backgroundColor: hotel.branding?.primaryColor || '#c9b4fa', color: hotel.branding?.primaryColor ? '#ffffff' : '#1b1938' }}
             >
               {hotel.name.charAt(0)}
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold text-[#222222]">{hotel.name}</h1>
-                <span className="bg-[#222222] text-white font-mono text-[10px] font-bold px-2 py-0.5 rounded-md">
+              <div className="flex items-center gap-2.5">
+                <h1 className="t-display-md text-on-primary">{hotel.name}</h1>
+                <span className="font-mono text-[10px] font-semibold uppercase text-on-dark-mute border border-hairline-dark rounded px-1.5 py-0.5">
                   Room {room?.roomNumber || '101'}
                 </span>
               </div>
-              <p className="text-xs text-[#6a6a6a]">
+              <p className="t-caption text-on-dark-mute" style={{ fontSize: 12 }}>
                 Welcome{room?.guestName ? `, ${room.guestName}` : ''} • Tap items to order to your room
               </p>
             </div>
           </div>
 
-          {/* Cart Trigger */}
+          {/* Tray trigger — the hero's violet pill */}
           <button
             onClick={() => setIsCartOpen(true)}
-            className="relative flex items-center gap-2 px-4 py-2 bg-[#ff385c] hover:bg-[#e00b41] text-white rounded-full text-xs font-bold shadow-sm transition-all"
+            className="btn-on-dark-pill relative px-4 py-2.5 text-xs"
           >
             <ShoppingBag className="w-4 h-4" />
             <span className="hidden sm:inline">Tray</span>
             {cartItemCount > 0 && (
-              <span className="bg-white text-[#ff385c] text-[10px] font-extrabold w-5 h-5 rounded-full flex items-center justify-center">
+              <span className="bg-primary text-violet-soft text-[10px] font-extrabold w-5 h-5 rounded-full flex items-center justify-center">
                 {cartItemCount}
               </span>
             )}
@@ -281,43 +283,34 @@ export const GuestRoomView: React.FC = () => {
       {/* Success Notification Banner */}
       {orderSuccessMsg && (
         <div className="max-w-3xl mx-auto px-4 pt-4">
-          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-2xl text-xs font-semibold flex items-center gap-2 shadow-xs">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <div className="bg-[#e7efee] border border-[#c9dcd9] text-[#0e3030] px-4 py-3 rounded-lg text-xs font-semibold flex items-center gap-2 shadow-xs">
+            <CheckCircle2 className="w-4 h-4 text-[#155555] shrink-0" />
             <span>{orderSuccessMsg}</span>
           </div>
         </div>
       )}
 
-      {/* Experience Sub-tabs: Dining vs Services vs Orders */}
-      <div className="max-w-3xl mx-auto px-4 pt-4">
-        <div className="flex items-center gap-2 bg-white p-1.5 rounded-2xl border border-[#ebebeb]">
+      {/* Experience Sub-tabs: pill-tab picker */}
+      <div className="max-w-3xl mx-auto px-4 pt-5">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setActiveTab('dining')}
-            className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-              activeTab === 'dining'
-                ? 'bg-[#ff385c] text-white shadow-xs'
-                : 'text-[#6a6a6a] hover:text-[#222222]'
-            }`}
+            data-active={activeTab === 'dining'}
+            className="pill-tab-light"
           >
             <Utensils className="w-3.5 h-3.5" /> In-Room Dining ({foodItems.length})
           </button>
           <button
             onClick={() => setActiveTab('services')}
-            className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-              activeTab === 'services'
-                ? 'bg-[#ff385c] text-white shadow-xs'
-                : 'text-[#6a6a6a] hover:text-[#222222]'
-            }`}
+            data-active={activeTab === 'services'}
+            className="pill-tab-light"
           >
             <Layers className="w-3.5 h-3.5" /> Room Services ({services.length})
           </button>
           <button
             onClick={() => setActiveTab('orders')}
-            className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-              activeTab === 'orders'
-                ? 'bg-[#ff385c] text-white shadow-xs'
-                : 'text-[#6a6a6a] hover:text-[#222222]'
-            }`}
+            data-active={activeTab === 'orders'}
+            className="pill-tab-light"
           >
             <Clock className="w-3.5 h-3.5" /> My Requests ({guestOrders.length})
           </button>
@@ -332,11 +325,8 @@ export const GuestRoomView: React.FC = () => {
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
               <button
                 onClick={() => setSelectedFoodCategory('ALL')}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
-                  selectedFoodCategory === 'ALL'
-                    ? 'bg-[#222222] text-white'
-                    : 'bg-white text-[#6a6a6a] border border-[#dddddd]'
-                }`}
+                data-active={selectedFoodCategory === 'ALL'}
+                className="pill-tab-light whitespace-nowrap"
               >
                 All Menu
               </button>
@@ -344,24 +334,21 @@ export const GuestRoomView: React.FC = () => {
                 <button
                   key={cat}
                   onClick={() => setSelectedFoodCategory(cat)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
-                    selectedFoodCategory === cat
-                      ? 'bg-[#222222] text-white'
-                      : 'bg-white text-[#6a6a6a] border border-[#dddddd]'
-                  }`}
+                  data-active={selectedFoodCategory === cat}
+                  className="pill-tab-light whitespace-nowrap"
                 >
                   {cat}
                 </button>
               ))}
 
-              <div className="h-4 w-px bg-[#dddddd] mx-1 shrink-0" />
+              <div className="h-4 w-px bg-[#e8e4dd] mx-1 shrink-0" />
 
               <button
                 onClick={() => setDietFilter(dietFilter === 'VEG' ? 'ALL' : 'VEG')}
                 className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap flex items-center gap-1 transition-colors ${
                   dietFilter === 'VEG'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-white text-emerald-700 border border-emerald-200'
+                    ? 'bg-[#155555] text-white'
+                    : 'bg-white text-[#0e3030] border border-[#c9dcd9]'
                 }`}
               >
                 <Leaf className="w-3 h-3" /> Veg Only
@@ -370,10 +357,10 @@ export const GuestRoomView: React.FC = () => {
 
             {/* Food Menu Items List or Empty State */}
             {filteredFood.length === 0 ? (
-              <div className="bg-white border border-[#ebebeb] rounded-3xl p-10 text-center space-y-2 shadow-xs">
-                <Utensils className="w-8 h-8 text-[#ff385c] mx-auto opacity-60" />
-                <h3 className="font-bold text-sm text-[#222222]">No Menu Items Listed</h3>
-                <p className="text-xs text-[#6a6a6a]">
+              <div className="bg-white border border-[#e8e4dd] rounded-xl p-10 text-center space-y-2 shadow-xs">
+                <Utensils className="w-8 h-8 text-[#1b1938] mx-auto opacity-60" />
+                <h3 className="font-bold text-sm text-[#292827]">No Menu Items Listed</h3>
+                <p className="text-xs text-[#73706d]">
                   The hotel kitchen has not added any food items to the dining menu yet.
                 </p>
               </div>
@@ -387,56 +374,56 @@ export const GuestRoomView: React.FC = () => {
                   return (
                     <div
                       key={item.id}
-                      className="bg-white border border-[#ebebeb] rounded-3xl p-4 shadow-xs flex flex-col justify-between"
+                      className="bg-white border border-[#e8e4dd] rounded-xl p-4 shadow-xs flex flex-col justify-between"
                     >
                       <div>
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <div className="flex items-center gap-1.5">
-                              <h3 className="font-bold text-sm text-[#222222]">{item.name}</h3>
+                              <h3 className="font-bold text-sm text-[#292827]">{item.name}</h3>
                               {isVeg && (
-                                <span className="p-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 text-[10px]">
+                                <span className="p-0.5 rounded-full bg-[#e7efee] text-[#155555] border border-[#c9dcd9] text-[10px]">
                                   <Leaf className="w-3 h-3" />
                                 </span>
                               )}
                             </div>
-                            <span className="text-[10px] font-mono text-[#6a6a6a] uppercase bg-[#fafafa] px-2 py-0.5 rounded-md mt-1 inline-block">
+                            <span className="text-[10px] font-mono text-[#73706d] uppercase bg-[#fafaf8] px-2 py-0.5 rounded-md mt-1 inline-block">
                               {item.category || 'Dining'}
                             </span>
                           </div>
 
-                          <div className="font-bold text-sm text-[#222222]">
+                          <div className="font-bold text-sm text-[#292827]">
                             {hotel.currencySymbol || '$'}
                             {price}
                           </div>
                         </div>
 
                         {item.description && (
-                          <p className="text-xs text-[#6a6a6a] mt-2 line-clamp-2">{item.description}</p>
+                          <p className="text-xs text-[#73706d] mt-2 line-clamp-2">{item.description}</p>
                         )}
                       </div>
 
-                      <div className="mt-4 pt-3 border-t border-[#ebebeb] flex items-center justify-between">
-                        <span className="text-[11px] text-[#6a6a6a]">
+                      <div className="mt-4 pt-3 border-t border-[#e8e4dd] flex items-center justify-between">
+                        <span className="text-[11px] text-[#73706d]">
                           ~{item.preparationTimeMinutes || 15} mins
                         </span>
 
                         {!item.isAvailable ? (
-                          <span className="text-xs font-semibold text-rose-500 bg-rose-50 px-2.5 py-1 rounded-full">
+                          <span className="text-xs font-semibold text-primary bg-[#ece6fb] px-2.5 py-1 rounded-full">
                             Out of Stock
                           </span>
                         ) : inCartItem ? (
-                          <div className="flex items-center gap-2 bg-[#f7f7f7] border border-[#dddddd] px-2 py-1 rounded-full">
+                          <div className="flex items-center gap-2 bg-[#fafaf8] border border-[#e8e4dd] px-2 py-1 rounded-full">
                             <button
                               onClick={() => updateQuantity(item.id, -1)}
-                              className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[#222222] font-bold shadow-xs hover:bg-[#ebebeb]"
+                              className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[#292827] font-bold shadow-xs hover:bg-[#e8e4dd]"
                             >
                               -
                             </button>
                             <span className="text-xs font-mono font-bold">{inCartItem.quantity}</span>
                             <button
                               onClick={() => updateQuantity(item.id, 1)}
-                              className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[#222222] font-bold shadow-xs hover:bg-[#ebebeb]"
+                              className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[#292827] font-bold shadow-xs hover:bg-[#e8e4dd]"
                             >
                               +
                             </button>
@@ -444,7 +431,7 @@ export const GuestRoomView: React.FC = () => {
                         ) : (
                           <button
                             onClick={() => addToCart(item)}
-                            className="px-3.5 py-1.5 rounded-full bg-[#ff385c] hover:bg-[#e00b41] text-white text-xs font-bold shadow-xs transition-colors"
+                            className="px-3.5 py-1.5 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-xs transition-colors"
                           >
                             + Add to Tray
                           </button>
@@ -462,10 +449,10 @@ export const GuestRoomView: React.FC = () => {
         {activeTab === 'services' && (
           <div className="space-y-4">
             {services.length === 0 ? (
-              <div className="bg-white border border-[#ebebeb] rounded-3xl p-10 text-center space-y-2 shadow-xs">
-                <Layers className="w-8 h-8 text-[#ff385c] mx-auto opacity-60" />
-                <h3 className="font-bold text-sm text-[#222222]">No Services Listed</h3>
-                <p className="text-xs text-[#6a6a6a]">
+              <div className="bg-white border border-[#e8e4dd] rounded-xl p-10 text-center space-y-2 shadow-xs">
+                <Layers className="w-8 h-8 text-[#1b1938] mx-auto opacity-60" />
+                <h3 className="font-bold text-sm text-[#292827]">No Services Listed</h3>
+                <p className="text-xs text-[#73706d]">
                   The hotel has not configured any instant housekeeping or concierge services yet.
                 </p>
               </div>
@@ -474,34 +461,34 @@ export const GuestRoomView: React.FC = () => {
                 {services.map((service) => (
                   <div
                     key={service.id}
-                    className="bg-white border border-[#ebebeb] rounded-3xl p-4 shadow-xs flex flex-col justify-between"
+                    className="bg-white border border-[#e8e4dd] rounded-xl p-4 shadow-xs flex flex-col justify-between"
                   >
                     <div>
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <h3 className="font-bold text-sm text-[#222222]">{service.name}</h3>
-                          <span className="text-[10px] font-mono text-[#6a6a6a] uppercase bg-[#fafafa] px-2 py-0.5 rounded-md mt-1 inline-block">
+                          <h3 className="font-bold text-sm text-[#292827]">{service.name}</h3>
+                          <span className="text-[10px] font-mono text-[#73706d] uppercase bg-[#fafaf8] px-2 py-0.5 rounded-md mt-1 inline-block">
                             {service.categoryId || 'Service'}
                           </span>
                         </div>
-                        <span className="font-bold text-xs text-[#222222]">
+                        <span className="font-bold text-xs text-[#292827]">
                           {service.price > 0 ? `${hotel.currencySymbol || '$'}${service.price}` : 'Complimentary'}
                         </span>
                       </div>
 
                       {service.description && (
-                        <p className="text-xs text-[#6a6a6a] mt-2">{service.description}</p>
+                        <p className="text-xs text-[#73706d] mt-2">{service.description}</p>
                       )}
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-[#ebebeb] flex items-center justify-between">
-                      <span className="text-[11px] text-[#6a6a6a]">
+                    <div className="mt-4 pt-3 border-t border-[#e8e4dd] flex items-center justify-between">
+                      <span className="text-[11px] text-[#73706d]">
                         ~{service.slaMinutes || service.estimatedTimeMinutes || 15} mins SLA
                       </span>
 
                       <button
                         onClick={() => setSelectedService(service)}
-                        className="px-3.5 py-1.5 rounded-full bg-[#ff385c] hover:bg-[#e00b41] text-white text-xs font-bold shadow-xs transition-colors"
+                        className="px-3.5 py-1.5 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-xs transition-colors"
                       >
                         Request Service
                       </button>
@@ -517,10 +504,10 @@ export const GuestRoomView: React.FC = () => {
         {activeTab === 'orders' && (
           <div className="space-y-4">
             {guestOrders.length === 0 ? (
-              <div className="bg-white border border-[#ebebeb] rounded-3xl p-10 text-center space-y-2 shadow-xs">
-                <Clock className="w-8 h-8 text-[#ff385c] mx-auto opacity-60" />
-                <h3 className="font-bold text-sm text-[#222222]">No Active Room Orders</h3>
-                <p className="text-xs text-[#6a6a6a]">
+              <div className="bg-white border border-[#e8e4dd] rounded-xl p-10 text-center space-y-2 shadow-xs">
+                <Clock className="w-8 h-8 text-[#1b1938] mx-auto opacity-60" />
+                <h3 className="font-bold text-sm text-[#292827]">No Active Room Orders</h3>
+                <p className="text-xs text-[#73706d]">
                   When you order food or request services, track their real-time progress right here.
                 </p>
               </div>
@@ -529,17 +516,17 @@ export const GuestRoomView: React.FC = () => {
                 {guestOrders.map((ord) => (
                   <div
                     key={ord.id}
-                    className="bg-white border border-[#ebebeb] rounded-3xl p-4 shadow-xs space-y-2.5"
+                    className="bg-white border border-[#e8e4dd] rounded-xl p-4 shadow-xs space-y-2.5"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#222222] capitalize">
+                      <span className="text-xs font-bold text-[#292827] capitalize">
                         {ord.type || 'Order'} Request
                       </span>
                       <span
                         className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full ${
                           ['COMPLETED', 'DELIVERED'].includes((ord.status || '').toUpperCase())
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-[#fff0f3] text-[#ff385c] border border-[#ffd1da]'
+                            ? 'bg-[#e7efee] text-[#0e3030] border border-[#c9dcd9]'
+                            : 'bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa]'
                         }`}
                       >
                         {ord.status || 'PENDING'}
@@ -547,22 +534,22 @@ export const GuestRoomView: React.FC = () => {
                     </div>
 
                     {ord.items && (
-                      <div className="bg-[#fafafa] p-3 rounded-2xl text-xs space-y-1 border border-[#ebebeb]">
+                      <div className="bg-[#fafaf8] p-3 rounded-lg text-xs space-y-1 border border-[#e8e4dd]">
                         {ord.items.map((i: any, idx: number) => (
                           <div key={idx} className="flex justify-between">
                             <span>
                               {i.quantity || 1}x {i.name}
                             </span>
-                            <span className="font-mono text-[#222222]">
+                            <span className="font-mono text-[#292827]">
                               {hotel.currencySymbol || '$'}
                               {(i.price || 0) * (i.quantity || 1)}
                             </span>
                           </div>
                         ))}
                         {ord.totalAmount > 0 && (
-                          <div className="flex justify-between font-bold pt-1 border-t border-[#ebebeb]">
+                          <div className="flex justify-between font-bold pt-1 border-t border-[#e8e4dd]">
                             <span>Total:</span>
-                            <span className="text-[#ff385c]">
+                            <span className="text-[#1b1938]">
                               {hotel.currencySymbol || '$'}
                               {ord.totalAmount}
                             </span>
@@ -572,7 +559,7 @@ export const GuestRoomView: React.FC = () => {
                     )}
 
                     {ord.instructions && (
-                      <p className="text-xs text-[#6a6a6a] italic">Note: "{ord.instructions}"</p>
+                      <p className="text-xs text-[#73706d] italic">Note: "{ord.instructions}"</p>
                     )}
                   </div>
                 ))}
@@ -585,15 +572,15 @@ export const GuestRoomView: React.FC = () => {
       {/* Cart Drawer Modal */}
       {isCartOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-[#ebebeb] max-h-[85vh] flex flex-col justify-between">
-            <div className="flex items-center justify-between border-b border-[#ebebeb] pb-3">
+          <div className="bg-white rounded-t-xl sm:rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-[#e8e4dd] max-h-[85vh] flex flex-col justify-between">
+            <div className="flex items-center justify-between border-b border-[#e8e4dd] pb-3">
               <div className="flex items-center gap-2">
-                <ShoppingBag className="w-5 h-5 text-[#ff385c]" />
-                <h3 className="text-base font-bold text-[#222222]">In-Room Order Tray</h3>
+                <ShoppingBag className="w-5 h-5 text-[#1b1938]" />
+                <h3 className="text-base font-bold text-[#292827]">In-Room Order Tray</h3>
               </div>
               <button
                 onClick={() => setIsCartOpen(false)}
-                className="p-1 rounded-full hover:bg-[#f7f7f7] text-[#6a6a6a]"
+                className="p-1 rounded-full hover:bg-[#fafaf8] text-[#73706d]"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -601,32 +588,32 @@ export const GuestRoomView: React.FC = () => {
 
             <div className="overflow-y-auto space-y-3 flex-1">
               {cart.length === 0 ? (
-                <div className="text-center py-8 text-xs text-[#6a6a6a]">Your tray is empty.</div>
+                <div className="text-center py-8 text-xs text-[#73706d]">Your tray is empty.</div>
               ) : (
                 cart.map((item) => (
                   <div
                     key={item.foodItem.id}
-                    className="flex items-center justify-between p-3 rounded-2xl bg-[#fafafa] border border-[#ebebeb]"
+                    className="flex items-center justify-between p-3 rounded-lg bg-[#fafaf8] border border-[#e8e4dd]"
                   >
                     <div>
-                      <div className="text-xs font-bold text-[#222222]">{item.foodItem.name}</div>
-                      <div className="text-[11px] text-[#6a6a6a]">
+                      <div className="text-xs font-bold text-[#292827]">{item.foodItem.name}</div>
+                      <div className="text-[11px] text-[#73706d]">
                         {hotel.currencySymbol || '$'}
                         {item.price} each
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 bg-white border border-[#dddddd] px-2 py-1 rounded-full">
+                    <div className="flex items-center gap-2 bg-white border border-[#e8e4dd] px-2 py-1 rounded-full">
                       <button
                         onClick={() => updateQuantity(item.foodItem.id, -1)}
-                        className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs text-[#222222] hover:bg-[#f7f7f7]"
+                        className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs text-[#292827] hover:bg-[#fafaf8]"
                       >
                         -
                       </button>
                       <span className="text-xs font-mono font-bold">{item.quantity}</span>
                       <button
                         onClick={() => updateQuantity(item.foodItem.id, 1)}
-                        className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs text-[#222222] hover:bg-[#f7f7f7]"
+                        className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs text-[#292827] hover:bg-[#fafaf8]"
                       >
                         +
                       </button>
@@ -637,7 +624,7 @@ export const GuestRoomView: React.FC = () => {
 
               {cart.length > 0 && (
                 <div>
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
                     Special Kitchen Instructions
                   </label>
                   <textarea
@@ -645,17 +632,18 @@ export const GuestRoomView: React.FC = () => {
                     value={specialInstructions}
                     onChange={(e) => setSpecialInstructions(e.target.value)}
                     placeholder="e.g. Extra spicy, no onions, bring cutlery..."
-                    className="w-full bg-white border border-[#dddddd] rounded-xl p-2.5 text-xs text-[#222222] focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl p-2.5 text-xs text-[#292827] focus:outline-none focus:border-[#292827]"
                   />
                 </div>
               )}
             </div>
 
             {cart.length > 0 && (
-              <div className="border-t border-[#ebebeb] pt-3 space-y-3">
-                <div className="flex items-center justify-between font-bold text-sm text-[#222222]">
+              /* The teal resolving band — the order's closing chord */
+              <div className="card-teal-band p-4 space-y-3">
+                <div className="flex items-center justify-between t-body-md font-bold text-on-primary">
                   <span>Total Amount:</span>
-                  <span className="text-[#ff385c] font-mono">
+                  <span className="font-mono">
                     {hotel.currencySymbol || '$'}
                     {cartTotal}
                   </span>
@@ -664,9 +652,9 @@ export const GuestRoomView: React.FC = () => {
                 <button
                   onClick={handlePlaceOrder}
                   disabled={isSubmittingOrder}
-                  className="w-full py-3 rounded-full bg-[#ff385c] hover:bg-[#e00b41] text-white text-xs font-bold shadow-sm transition-all disabled:opacity-50"
+                  className="btn-on-teal w-full py-3 disabled:opacity-50"
                 >
-                  {isSubmittingOrder ? 'Sending to Kitchen...' : `Place Room Order • Room ${room?.roomNumber || '101'}`}
+                  {isSubmittingOrder ? 'Sending to Kitchen…' : `Place Room Order • Room ${room?.roomNumber || '101'}`}
                 </button>
               </div>
             )}
@@ -677,21 +665,21 @@ export const GuestRoomView: React.FC = () => {
       {/* Service Request Confirmation Modal */}
       {selectedService && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-[#ebebeb]">
-            <div className="flex items-center justify-between border-b border-[#ebebeb] pb-3">
-              <h3 className="text-base font-bold text-[#222222]">Request: {selectedService.name}</h3>
+          <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-[#e8e4dd]">
+            <div className="flex items-center justify-between border-b border-[#e8e4dd] pb-3">
+              <h3 className="text-base font-bold text-[#292827]">Request: {selectedService.name}</h3>
               <button
                 onClick={() => setSelectedService(null)}
-                className="p-1 rounded-full hover:bg-[#f7f7f7] text-[#6a6a6a]"
+                className="p-1 rounded-full hover:bg-[#fafaf8] text-[#73706d]"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="space-y-3">
-              <p className="text-xs text-[#6a6a6a]">{selectedService.description}</p>
+              <p className="text-xs text-[#73706d]">{selectedService.description}</p>
               <div>
-                <label className="block text-xs font-semibold text-[#222222] mb-1">
+                <label className="block text-xs font-semibold text-[#292827] mb-1">
                   Specific Requests or Notes
                 </label>
                 <textarea
@@ -699,16 +687,16 @@ export const GuestRoomView: React.FC = () => {
                   value={serviceNotes}
                   onChange={(e) => setServiceNotes(e.target.value)}
                   placeholder="e.g. Please deliver 2 extra towels to the bathroom..."
-                  className="w-full bg-white border border-[#dddddd] rounded-xl p-2.5 text-xs text-[#222222] focus:outline-none focus:border-[#222222]"
+                  className="w-full bg-white border border-[#e8e4dd] rounded-xl p-2.5 text-xs text-[#292827] focus:outline-none focus:border-[#292827]"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#ebebeb]">
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#e8e4dd]">
               <button
                 type="button"
                 onClick={() => setSelectedService(null)}
-                className="px-4 py-2 rounded-full border border-[#dddddd] text-xs font-semibold text-[#6a6a6a]"
+                className="px-4 py-2 rounded-full border border-[#e8e4dd] text-xs font-semibold text-[#73706d]"
               >
                 Cancel
               </button>
@@ -716,7 +704,7 @@ export const GuestRoomView: React.FC = () => {
                 type="button"
                 onClick={handleRequestService}
                 disabled={isSubmittingOrder}
-                className="px-5 py-2 rounded-full bg-[#ff385c] hover:bg-[#e00b41] text-xs font-bold text-white shadow-sm disabled:opacity-50"
+                className="px-5 py-2 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-xs font-bold text-white shadow-sm disabled:opacity-50"
               >
                 {isSubmittingOrder ? 'Dispatching...' : 'Confirm Request'}
               </button>
