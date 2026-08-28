@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { firestoreService } from '../../services/firestoreService';
 import { Hotel } from '../../types';
 import { CreateHotelWizardModal } from './CreateHotelWizardModal';
+import { NewOrderAlertCenter } from '../common/NewOrderAlertCenter';
 import {
   Building2,
   Plus,
@@ -350,6 +351,9 @@ export const SuperAdminDashboard: React.FC = () => {
           }}
         />
       )}
+
+      {/* Audio + voice new-order alerts (real-time, across all hotels) */}
+      <NewOrderAlertCenter hotels={allHotels} />
     </div>
   );
 };

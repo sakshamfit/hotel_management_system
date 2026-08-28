@@ -25,7 +25,6 @@ interface AuthContextType {
   setSelectedTenantId: (id: string | null) => void;
   loginWithCredentials: (email: string, pass: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
-  loginAsDevRole: (role: 'super_admin' | 'hotel_admin', targetHotelId?: string) => void;
   switchHotelTenant: (hotelId: string) => Promise<void>;
   refreshClaims: () => Promise<void>;
   logout: () => Promise<void>;
@@ -53,31 +52,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Process custom claims from Firebase User
+  // Process role/claims from Firebase User.
+  // PRIMARY: read role + hotelId from the Firestore users/{uid} document (free-tier approach).
+  // FALLBACK: custom claims on the ID token (kept so existing Admin SDK users still work).
   const processUserClaims = useCallback(async (fbUser: FirebaseUser, forceRefresh = true) => {
     try {
-      // Force token refresh to ensure custom claims are fetched
+      // Force token refresh to ensure custom claims are fetched (fallback source)
       let tokenResult = await fbUser.getIdTokenResult(forceRefresh);
-      let role = tokenResult.claims.role as string | undefined;
-      let hotelId = tokenResult.claims.hotelId as string | undefined;
+      const claimRole = tokenResult.claims.role as string | undefined;
+      const claimHotelId = tokenResult.claims.hotelId as string | undefined;
 
-      // Handle edge case: freshly created user whose claim hasn't propagated to client token yet
+      // Read role from Firestore users/{uid} document first
+      const docUser = await firestoreService.fetchUserRole(fbUser.uid);
+      let role = (docUser?.role as string | undefined) || claimRole;
+      let hotelId = docUser?.hotelId || claimHotelId;
+
+      // Handle edge case: freshly created user whose role hasn't propagated yet
       if (!role) {
         await new Promise((r) => setTimeout(r, 600));
         tokenResult = await fbUser.getIdTokenResult(true);
-        role = tokenResult.claims.role as string | undefined;
-        hotelId = tokenResult.claims.hotelId as string | undefined;
+        role = (docUser?.role as string | undefined) || (tokenResult.claims.role as string | undefined);
+        hotelId = docUser?.hotelId || (tokenResult.claims.hotelId as string | undefined);
       }
 
-      // Default role fallback if email is super admin email
-      if (!role && (fbUser.email?.toLowerCase() === 'admin@raees.com' || fbUser.email?.toLowerCase() === 'ra7650384@gmail.com')) {
-        try {
-          await firestoreService.bootstrapSuperAdmin(fbUser.email);
-          tokenResult = await fbUser.getIdTokenResult(true);
-          role = tokenResult.claims.role as string | undefined;
-        } catch (e) {
-          console.warn('Auto-bootstrap error:', e);
-        }
+      // A valid role MUST come from the Firestore users/{uid} doc or the ID token.
+      // No hardcoded email / bootstrap fallback. Users without a role are signed out.
+      if (role !== 'super_admin' && role !== 'hotel_admin') {
+        console.warn(`User ${fbUser.uid} (${fbUser.email}) has no provisioned role. Signing out.`);
+        await signOut(auth);
+        setUser(null);
+        setHotel(null);
+        setSelectedTenantIdState(null);
+        setActiveExperience('login');
+        return;
       }
 
       const normalizedRole: UserRole = (role === 'super_admin' ? 'super_admin' : 'hotel_admin');
@@ -102,8 +109,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const hotelDoc = await firestoreService.getHotel(hotelId);
         setHotel(hotelDoc);
       } else {
-        // Default to super admin for owner email or show super admin view
-        setActiveExperience('super_admin');
+        // hotel_admin without an assigned hotel has no valid tenant — reject access
+        console.warn(`Hotel admin ${fbUser.uid} has no hotelId. Signing out.`);
+        await signOut(auth);
+        setUser(null);
+        setHotel(null);
+        setSelectedTenantIdState(null);
+        setActiveExperience('login');
+        return;
       }
     } catch (err) {
       console.error('Error processing Firebase user claims:', err);
@@ -185,28 +198,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Direct Dev Preview Mode (in case Identity Toolkit propagation is pending on GCP)
-  const loginAsDevRole = (role: 'super_admin' | 'hotel_admin', targetHotelId?: string) => {
-    const devUser: User = {
-      id: role === 'super_admin' ? 'usr_super_admin_dev' : 'usr_hotel_admin_dev',
-      hotelId: targetHotelId || (allHotels[0]?.id || 'hotel_demo_1'),
-      name: role === 'super_admin' ? 'Super Admin (Master)' : 'Grand Plaza Admin',
-      email: role === 'super_admin' ? 'admin@raees.com' : 'hotel@admin.com',
-      phone: '+1 555 0192',
-      role,
-      token: 'tok_dev_preview_token',
-    };
-    setUser(devUser);
-    if (role === 'super_admin') {
-      setActiveExperience('super_admin');
-    } else {
-      setSelectedTenantIdState(devUser.hotelId);
-      const found = allHotels.find((h) => h.id === devUser.hotelId);
-      if (found) setHotel(found);
-      setActiveExperience('hotel_os');
-    }
-  };
-
   const refreshClaims = async () => {
     if (auth.currentUser) {
       setIsLoading(true);
@@ -273,7 +264,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSelectedTenantId,
         loginWithCredentials,
         loginWithGoogle,
-        loginAsDevRole,
         switchHotelTenant,
         refreshClaims,
         logout,

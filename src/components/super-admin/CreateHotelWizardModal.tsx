@@ -179,8 +179,9 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         roomsCount: 0,
       });
 
-      // 2. Create Firebase Auth user for hotel_admin using Admin SDK and set custom claims
-      await firestoreService.createHotelUserAuth(
+      // 2. Create Firebase Auth user for hotel_admin (secondary app instance so the
+      // Super Admin's session is unaffected) and store role in users/{uid}
+      await firestoreService.createHotelLogin(
         hotelId,
         hotelName.trim(),
         adminEmail.trim(),
@@ -549,7 +550,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                   <span>Secure Firebase Auth User Creation</span>
                 </div>
                 <p>
-                  This will provision a Firebase Auth user with custom claim <code className="bg-emerald-100 px-1 py-0.5 rounded font-mono text-[11px]">{`{ role: "hotel_admin", hotelId }`}</code> using Firebase Admin SDK.
+                  This will provision a Firebase Auth user without signing out your Super Admin session and store their role in <code className="bg-emerald-100 px-1 py-0.5 rounded font-mono text-[11px]">{`users/{uid} → { role: "hotel_admin", hotelId }`}</code>.
                 </p>
               </div>
 

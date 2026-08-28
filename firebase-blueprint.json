@@ -1,5 +1,19 @@
 {
   "entities": {
+    "users": {
+      "title": "App User",
+      "description": "Root users/{uid} documents storing role and tenant mapping (free-tier, no custom claims)",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["super_admin", "hotel_admin"] },
+        "hotelId": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["role", "email"]
+    },
     "hotels": {
       "title": "Hotel",
       "description": "Hotel tenant entity in multi-tenant system",
