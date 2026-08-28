@@ -233,9 +233,10 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         console.warn('Branding image upload failed (hotel was still created):', imgErr?.message);
       }
 
-      // 2. Create Firebase Auth user for hotel_admin using Admin SDK and set custom claims
+      // 2. Create Firebase Auth user for hotel_admin (secondary app instance so
+      //    the Super Admin's session is unaffected) and store the role in users/{uid}
       try {
-        await firestoreService.createHotelUserAuth(
+        await firestoreService.createHotelLogin(
           hotelId,
           hotelName.trim(),
           adminEmail.trim(),

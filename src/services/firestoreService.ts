@@ -15,7 +15,9 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
-import { db, auth } from '../firebase/config';
+import { initializeApp, deleteApp, FirebaseApp } from 'firebase/app';
+import { getAuth as getSecondaryAuth, createUserWithEmailAndPassword, signOut as signOutFromSecondary } from 'firebase/auth';
+import { db, auth, firebaseConfig } from '../firebase/config';
 import {
   Hotel,
   Room,
@@ -27,6 +29,92 @@ import {
 } from '../types';
 
 export const firestoreService = {
+  // ==========================================
+  // USERS (Root Collection: users)
+  // Stores role + hotelId for every Firebase Auth user.
+  // Used instead of custom claims so the Super Admin's session
+  // is never affected when creating a new hotel admin (free tier, no Blaze).
+  // ==========================================
+
+  // Read a user's role document (role + hotelId) from Firestore.
+  // Returns null if the doc is missing or the read is denied.
+  fetchUserRole: async (uid: string): Promise<{ role: string | null; hotelId: string | null } | null> => {
+    try {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (!snap.exists()) return null;
+      const data = snap.data();
+      return {
+        role: (data.role as string) || null,
+        hotelId: (data.hotelId as string) || null,
+      };
+    } catch (err) {
+      console.warn(`Failed to read users/${uid} role document:`, err);
+      return null;
+    }
+  },
+
+  // Create a hotel admin login using a temporary SECONDARY Firebase app instance.
+  // This is the free-tier strategy: it creates the Firebase Auth user WITHOUT
+  // logging out the currently signed-in Super Admin (no Admin SDK / no Cloud Function),
+  // and persists the role in a users/{uid} Firestore document.
+  // Falls back to the server Admin SDK endpoint if the client-side signup is blocked.
+  createHotelLogin: async (
+    hotelId: string,
+    hotelName: string,
+    email: string,
+    password: string,
+    name?: string,
+    phone?: string
+  ): Promise<{ success: boolean; uid: string; email: string; role: string; hotelId: string }> => {
+    const trimmedEmail = email.toLowerCase().trim();
+
+    try {
+      // ---- PRIMARY: Secondary app instance (free tier, no server needed) ----
+      const appName = `SecondaryHotelLoginApp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      let secondaryApp: FirebaseApp | null = null;
+      try {
+        secondaryApp = initializeApp(firebaseConfig, appName);
+        const secondaryAuth = getSecondaryAuth(secondaryApp);
+        const userCred = await createUserWithEmailAndPassword(secondaryAuth, trimmedEmail, password);
+        const newUid = userCred.user.uid;
+
+        // Persist role + hotelId in Firestore (custom claims can't be set client-side)
+        await setDoc(doc(db, 'users', newUid), {
+          role: 'hotel_admin',
+          hotelId,
+          email: trimmedEmail,
+          displayName: name || `${hotelName} Admin`,
+          phone: phone || '',
+          createdAt: new Date().toISOString(),
+        });
+
+        // Clear the secondary session and clean up the temporary app
+        await signOutFromSecondary(secondaryAuth);
+
+        return { success: true, uid: newUid, email: trimmedEmail, role: 'hotel_admin', hotelId };
+      } finally {
+        if (secondaryApp) {
+          try {
+            await deleteApp(secondaryApp);
+          } catch (delErr) {
+            console.warn('Could not delete secondary Firebase app:', delErr);
+          }
+        }
+      }
+    } catch (primaryErr: any) {
+      // ---- FALLBACK: Admin SDK endpoint (server) — also writes the users/{uid} doc ----
+      console.warn('Secondary-app signup failed, falling back to Admin SDK endpoint:', primaryErr);
+      return firestoreService.createHotelUserAuth(
+        hotelId,
+        hotelName,
+        trimmedEmail,
+        password,
+        name,
+        phone
+      );
+    }
+  },
+
   // ==========================================
   // HOTELS (Root Collection: hotels)
   // ==========================================
@@ -287,6 +375,36 @@ export const firestoreService = {
     );
   },
 
+  // Stream DOC CHANGES for a hotel's orders collection so callers can detect
+  // genuinely NEW documents (snapshot.docChanges() with type === "added").
+  // - The very first snapshot reports every existing doc as "added", so the
+  //   `isFirst` flag lets callers skip the initial load / pre-existing orders.
+  // - Subsequent callbacks only carry real-time additions.
+  subscribeOrderChanges: (
+    hotelId: string,
+    onChanges: (added: Array<{ id: string; data: any }>, isFirst: boolean) => void,
+    onError?: (err: Error) => void
+  ): Unsubscribe => {
+    const col = collection(db, 'hotels', hotelId, 'orders');
+    const q = query(col, orderBy('createdAt', 'desc'));
+    let isFirst = true;
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const added = snapshot
+          .docChanges()
+          .filter((change) => change.type === 'added')
+          .map((change) => ({ id: change.doc.id, data: change.doc.data() }));
+        onChanges(added, isFirst);
+        isFirst = false;
+      },
+      (error) => {
+        console.error(`Error subscribing to order changes for hotel ${hotelId}:`, error);
+        if (onError) onError(error);
+      }
+    );
+  },
+
   createOrder: async (hotelId: string, orderData: any): Promise<string> => {
     const col = collection(db, 'hotels', hotelId, 'orders');
     const newDoc = await addDoc(col, {
@@ -380,6 +498,8 @@ export const firestoreService = {
   },
 
   // Server API calls helper (with Super Admin ID token)
+  // Free-tier fallback: uses the Firebase Admin SDK server endpoint,
+  // which sets custom claims AND writes the users/{uid} role document.
   createHotelUserAuth: async (
     hotelId: string,
     hotelName: string,

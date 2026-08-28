@@ -191,3 +191,15 @@
     color: var(--color-ink-mute);
   }
 }
+/* Order alert toast slide-in */
+@keyframes navOrderIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+

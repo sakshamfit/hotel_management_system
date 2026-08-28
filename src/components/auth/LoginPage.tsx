@@ -7,13 +7,10 @@ import {
   EyeOff,
   ArrowRight,
   AlertCircle,
-  Zap,
-  Building2,
-  BedDouble,
 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
-  const { loginWithCredentials, loginWithGoogle, loginAsDevRole } = useAuth();
+  const { loginWithCredentials, loginWithGoogle } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -42,7 +39,7 @@ export const LoginPage: React.FC = () => {
         err.code === 'auth/operation-not-allowed'
       ) {
         setIsIdentityToolkitError(true);
-        msg = 'Firebase Identity Toolkit API is pending activation on Google Cloud project 268701568128. Enable it or use Instant Preview below.';
+        msg = 'Firebase Identity Toolkit API is pending activation on Google Cloud project. Please enable it to authenticate with Firebase.';
       } else if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         msg = 'Invalid email or password. If this is a newly created hotel, please verify the exact email and password set by the Super Admin.';
       } else if (err.code === 'auth/too-many-requests') {
@@ -161,9 +158,9 @@ export const LoginPage: React.FC = () => {
                   </div>
                   <p className="t-caption text-ink-mute leading-relaxed">
                     The internal Google Cloud container project uses managed credentials. You do not
-                    need to access the Google Cloud Console or configure IAM permissions. Use the{' '}
-                    <strong>Instant Experience Launch</strong> buttons below to immediately manage
-                    hotels, rooms, POS, and guest orders.
+                    need to access the Google Cloud Console or configure IAM permissions. Sign in
+                    with the admin credentials provisioned for your account (or the platform super
+                    admin) to manage hotels, rooms, POS, and guest orders.
                   </p>
                 </div>
               )}
@@ -277,44 +274,6 @@ export const LoginPage: React.FC = () => {
                 </span>
               </button>
 
-              {/* Instant preview — feature-row cards on warm off-white */}
-              <div className="pt-6 border-t border-hairline space-y-3">
-                <div className="flex items-center gap-1.5 t-button-cap text-ink">
-                  <Zap className="w-3.5 h-3.5 text-teal-mid" />
-                  <span>Instant Experience Launch</span>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => loginAsDevRole('super_admin')}
-                    className="card-feature-row p-4 text-left transition-colors hover:bg-[#f1efe9] text-xs space-y-1"
-                  >
-                    <div className="font-bold text-ink flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <Building2 className="w-3.5 h-3.5 text-ink-mute" />
-                        Super Admin
-                      </span>
-                      <ArrowRight className="w-3 h-3 text-ink-faint" />
-                    </div>
-                    <div className="t-caption text-ink-mute">Manage all hotels &amp; billing</div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => loginAsDevRole('hotel_admin')}
-                    className="card-feature-row p-4 text-left transition-colors hover:bg-[#f1efe9] text-xs space-y-1"
-                  >
-                    <div className="font-bold text-ink flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <BedDouble className="w-3.5 h-3.5 text-ink-mute" />
-                        Hotel Admin
-                      </span>
-                      <ArrowRight className="w-3 h-3 text-ink-faint" />
-                    </div>
-                    <div className="t-caption text-ink-mute">Rooms, POS &amp; Operations</div>
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
         </main>

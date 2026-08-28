@@ -4,6 +4,7 @@ import { firestoreService } from '../../services/firestoreService';
 import { deleteFolder } from '../../services/storageService';
 import { Hotel } from '../../types';
 import { CreateHotelWizardModal } from './CreateHotelWizardModal';
+import { NewOrderAlertCenter } from '../common/NewOrderAlertCenter';
 import {
   Building2,
   Plus,
@@ -392,6 +393,9 @@ export const SuperAdminDashboard: React.FC = () => {
           }}
         />
       )}
+
+      {/* Audio + voice new-order alerts (real-time, across all hotels) */}
+      <NewOrderAlertCenter hotels={allHotels} />
     </div>
   );
 };
