@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { firestoreService } from '../../services/firestoreService';
+import { uploadImage, extensionForFile, deleteFolder } from '../../services/storageService';
+import { ImageUploader } from '../common/ImageUploader';
 import {
   X,
   Building2,
@@ -17,6 +19,8 @@ import {
   MapPin,
   Globe,
   Sparkles,
+  Copy,
+  Check,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -45,10 +49,10 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
   const [currency, setCurrency] = useState('USD');
   const [timezone, setTimezone] = useState('America/New_York');
 
-  // Step 2: Branding & Appearance
-  const [logoUrl, setLogoUrl] = useState('');
-  const [coverImageUrl, setCoverImageUrl] = useState('');
-  const [primaryColor, setPrimaryColor] = useState('#ff385c');
+  // Step 2: Branding & Appearance (images upload to Storage after the hotel doc is created)
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [primaryColor, setPrimaryColor] = useState('#1b1938');
   const [welcomeMessage, setWelcomeMessage] = useState('Welcome to our hotel. Explore amenities, place room service orders, and request assistance.');
 
   // Step 3: Modules Configuration
@@ -72,13 +76,25 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
     requireCallConfirmation: false,
   });
 
-  // Step 4: Hotel Admin Account (Email & Password for login)
+  // Step 4: Hotel Admin Account (Email & Password for login).
+  // The password is ONLY ever sent to Firebase Auth (via the server endpoint)
+  // — it is never written to Firestore. It is shown to the super admin exactly
+  // once right after creation, then discarded from memory.
   const [adminName, setAdminName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminPhone, setAdminPhone] = useState('');
 
+  // One-time credentials reveal after successful creation
+  const [revealedCredentials, setRevealedCredentials] = useState<{
+    hotelName: string;
+    email: string;
+    password: string;
+  } | null>(null);
+  const [passwordCopied, setPasswordCopied] = useState(false);
+
   if (!isOpen) return null;
+
 
   const validateStep1 = () => {
     if (!hotelName.trim()) return 'Hotel Name is required.';
@@ -162,11 +178,14 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         currencySymbol,
         timezone,
         status: 'active',
+        // loginEmail is stored for reference in the admin panel; the password
+        // is deliberately NOT persisted anywhere in Firestore.
+        loginEmail: adminEmail.trim(),
         branding: {
-          logoUrl: logoUrl.trim(),
-          coverImageUrl: coverImageUrl.trim(),
+          logoUrl: '',
+          coverImageUrl: '',
           primaryColor,
-          secondaryColor: '#222222',
+          secondaryColor: '#292827',
           accentColor: primaryColor,
           fontFamily: 'Inter, sans-serif',
           welcomeMessage,
@@ -179,16 +198,58 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         roomsCount: 0,
       });
 
-      // 2. Create Firebase Auth user for hotel_admin (secondary app instance so the
-      // Super Admin's session is unaffected) and store role in users/{uid}
-      await firestoreService.createHotelLogin(
-        hotelId,
-        hotelName.trim(),
-        adminEmail.trim(),
-        adminPassword.trim(),
-        adminName.trim(),
-        adminPhone.trim()
-      );
+      // 1b. Upload branding images to Storage under hotels/{hotelId}/branding/
+      //     and save the download URLs back onto the hotel document.
+      let uploadedLogoUrl = '';
+      let uploadedCoverUrl = '';
+      try {
+        if (logoFile) {
+          uploadedLogoUrl = await uploadImage({
+            file: logoFile,
+            path: `hotels/${hotelId}/branding/logo.${extensionForFile(logoFile)}`,
+          });
+        }
+        if (coverFile) {
+          uploadedCoverUrl = await uploadImage({
+            file: coverFile,
+            path: `hotels/${hotelId}/branding/cover.${extensionForFile(coverFile)}`,
+          });
+        }
+        if (uploadedLogoUrl || uploadedCoverUrl) {
+          await firestoreService.updateHotelDoc(hotelId, {
+            branding: {
+              logoUrl: uploadedLogoUrl,
+              coverImageUrl: uploadedCoverUrl,
+              primaryColor,
+              secondaryColor: '#292827',
+              accentColor: primaryColor,
+              fontFamily: 'Inter, sans-serif',
+              welcomeMessage,
+            },
+          });
+        }
+      } catch (imgErr: any) {
+        // The hotel itself was created successfully — images are non-critical.
+        console.warn('Branding image upload failed (hotel was still created):', imgErr?.message);
+      }
+
+      // 2. Create Firebase Auth user for hotel_admin (secondary app instance so
+      //    the Super Admin's session is unaffected) and store the role in users/{uid}
+      try {
+        await firestoreService.createHotelLogin(
+          hotelId,
+          hotelName.trim(),
+          adminEmail.trim(),
+          adminPassword.trim(),
+          adminName.trim(),
+          adminPhone.trim()
+        );
+      } catch (authErr: any) {
+        // Auth user creation failing must not orphan the hotel document
+        await firestoreService.deleteHotelDoc(hotelId).catch(() => undefined);
+        await deleteFolder(`hotels/${hotelId}`).catch(() => undefined);
+        throw authErr;
+      }
 
       try {
         confetti({
@@ -200,8 +261,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         // Confetti optional
       }
 
-      onSuccess();
-      onClose();
+      // Show the generated credentials exactly ONCE — the password lives only
+      // in this component's memory and is cleared when the admin closes this.
+      setRevealedCredentials({
+        hotelName: hotelName.trim(),
+        email: adminEmail.trim(),
+        password: adminPassword,
+      });
     } catch (err: any) {
       console.error('Error creating hotel:', err);
       setError(err.message || 'Failed to provision hotel. Please check details and try again.');
@@ -210,30 +276,117 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
     }
   };
 
+  const handleFinishReveal = () => {
+    // Discard the password from memory — it is not retrievable anywhere after this.
+    setRevealedCredentials(null);
+    setPasswordCopied(false);
+    onSuccess();
+    onClose();
+  };
+
+  const handleCopyPassword = async () => {
+    if (!revealedCredentials) return;
+    try {
+      await navigator.clipboard.writeText(revealedCredentials.password);
+      setPasswordCopied(true);
+      setTimeout(() => setPasswordCopied(false), 2000);
+    } catch {
+      // Clipboard API unavailable — admin can still select the text manually
+    }
+  };
+
+  // One-time credentials reveal — replaces the wizard immediately after the
+  // hotel account is created. The password exists only in this screen.
+  if (revealedCredentials) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+        <div className="bg-canvas rounded-xl w-full max-w-md p-6 space-y-5 shadow-2xl border border-hairline">
+          <div className="text-center space-y-3">
+            <div className="w-14 h-14 rounded-xl bg-teal-tint border border-teal-line text-teal-deep flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-7 h-7" />
+            </div>
+            <h2 className="t-display-md">{revealedCredentials.hotelName} is live</h2>
+            <p className="t-caption text-ink-mute">
+              The hotel admin account was created in Firebase Auth. Save the password now — it will
+              not be shown again.
+            </p>
+          </div>
+
+          <div className="card-feature-row p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="t-caption text-ink-mute shrink-0">Login Email</span>
+              <span className="font-mono font-semibold text-ink text-xs truncate">
+                {revealedCredentials.email}
+              </span>
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="t-caption text-ink-mute">Password</span>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 bg-canvas border border-hairline rounded-lg px-3 py-2.5 font-mono text-sm text-ink select-all truncate">
+                  {revealedCredentials.password}
+                </code>
+                <button
+                  type="button"
+                  onClick={handleCopyPassword}
+                  className="btn-primary-dark px-3.5 py-2.5 text-xs shrink-0"
+                >
+                  {passwordCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" /> Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" /> Copy
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <p className="t-micro text-ink-faint flex items-center gap-1.5">
+              <Lock className="w-3 h-3" />
+              Stored only in Firebase Auth — never in the database.
+            </p>
+          </div>
+
+          <div className="bg-violet-tint border border-violet-soft rounded-lg px-3.5 py-2.5 text-xs text-primary-deep flex items-start gap-2 font-medium">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>Save this password now — it will not be shown again.</span>
+          </div>
+
+          <button type="button" onClick={handleFinishReveal} className="btn-primary-dark w-full py-3">
+            I&rsquo;ve Saved It — Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
-      <div className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-[#ebebeb]">
+      <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-[#e8e4dd]">
         {/* Modal Header */}
-        <div className="p-6 border-b border-[#ebebeb] flex items-center justify-between">
+        <div className="p-6 border-b border-[#e8e4dd] flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-[#fff0f3] text-[#ff385c] border border-[#ffd1da] flex items-center justify-center font-bold">
+            <div className="w-10 h-10 rounded-lg bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] flex items-center justify-center font-bold">
               <Building2 className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-[#222222]">Add New Hotel Property</h2>
-              <p className="text-xs text-[#6a6a6a]">Step {step} of 4 • Provision isolated multi-tenant hotel</p>
+              <h2 className="text-lg font-bold text-[#292827]">Add New Hotel Property</h2>
+              <p className="text-xs text-[#73706d]">Step {step} of 4 • Provision isolated multi-tenant hotel</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-full hover:bg-[#f7f7f7] text-[#6a6a6a] hover:text-[#222222] transition-colors"
+            className="p-2 rounded-full hover:bg-[#fafaf8] text-[#73706d] hover:text-[#292827] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Step Indicators */}
-        <div className="px-6 pt-4 pb-2 border-b border-[#ebebeb] bg-[#fafafa]">
+        <div className="px-6 pt-4 pb-2 border-b border-[#e8e4dd] bg-[#fafaf8]">
           <div className="flex items-center justify-between">
             {[
               { num: 1, label: 'Hotel Profile', icon: Building2 },
@@ -249,17 +402,17 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                   <div
                     className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
                       isPast
-                        ? 'bg-emerald-500 text-white'
+                        ? 'bg-[#155555] text-white'
                         : isCurrent
-                        ? 'bg-[#ff385c] text-white ring-2 ring-[#ffd1da]'
-                        : 'bg-[#ebebeb] text-[#6a6a6a]'
+                        ? 'bg-[#1b1938] text-white ring-2 ring-[#c9b4fa]'
+                        : 'bg-[#e8e4dd] text-[#73706d]'
                     }`}
                   >
                     {isPast ? <CheckCircle2 className="w-4 h-4" /> : s.num}
                   </div>
                   <span
                     className={`text-xs font-semibold hidden sm:inline ${
-                      isCurrent ? 'text-[#222222]' : 'text-[#6a6a6a]'
+                      isCurrent ? 'text-[#292827]' : 'text-[#73706d]'
                     }`}
                   >
                     {s.label}
@@ -273,7 +426,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-4">
           {error && (
-            <div className="p-3.5 bg-[#fff0f3] border border-[#ffd1da] rounded-2xl text-xs text-[#ff385c] flex items-start gap-2.5">
+            <div className="p-3.5 bg-[#ece6fb] border border-[#c9b4fa] rounded-lg text-xs text-[#1b1938] flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
@@ -284,8 +437,8 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
-                    Hotel Property Name <span className="text-[#ff385c]">*</span>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                    Hotel Property Name <span className="text-[#1b1938]">*</span>
                   </label>
                   <input
                     type="text"
@@ -293,13 +446,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                     value={hotelName}
                     onChange={(e) => setHotelName(e.target.value)}
                     placeholder="e.g. Royal Grand Resort & Spa"
-                    className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
-                    Unique Hotel Code/ID <span className="text-[#ff385c]">*</span>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                    Unique Hotel Code/ID <span className="text-[#1b1938]">*</span>
                   </label>
                   <input
                     type="text"
@@ -307,12 +460,12 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                     value={hotelCode}
                     onChange={(e) => setHotelCode(e.target.value.toUpperCase())}
                     placeholder="e.g. RGR-001"
-                    className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] font-mono uppercase focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] font-mono uppercase focus:outline-none focus:border-[#292827]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
                     Legal / Business Name
                   </label>
                   <input
@@ -320,13 +473,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                     value={legalName}
                     onChange={(e) => setLegalName(e.target.value)}
                     placeholder="e.g. Royal Hospitality Ltd"
-                    className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                   />
                 </div>
 
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
-                    Street Address <span className="text-[#ff385c]">*</span>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                    Street Address <span className="text-[#1b1938]">*</span>
                   </label>
                   <input
                     type="text"
@@ -334,13 +487,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
                     placeholder="e.g. 104 Ocean View Boulevard"
-                    className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
-                    City <span className="text-[#ff385c]">*</span>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                    City <span className="text-[#1b1938]">*</span>
                   </label>
                   <input
                     type="text"
@@ -348,13 +501,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
                     placeholder="e.g. Miami"
-                    className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
-                    Country <span className="text-[#ff385c]">*</span>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                    Country <span className="text-[#1b1938]">*</span>
                   </label>
                   <input
                     type="text"
@@ -362,13 +515,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                     value={country}
                     onChange={(e) => setCountry(e.target.value)}
                     placeholder="e.g. United States"
-                    className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
-                    Hotel Contact Phone <span className="text-[#ff385c]">*</span>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                    Hotel Contact Phone <span className="text-[#1b1938]">*</span>
                   </label>
                   <input
                     type="tel"
@@ -376,13 +529,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="e.g. +1 305 555 0199"
-                    className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
-                    Hotel Official Email <span className="text-[#ff385c]">*</span>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                    Hotel Official Email <span className="text-[#1b1938]">*</span>
                   </label>
                   <input
                     type="email"
@@ -390,18 +543,18 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="e.g. info@royalgrand.com"
-                    className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
-                    Operating Currency <span className="text-[#ff385c]">*</span>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                    Operating Currency <span className="text-[#1b1938]">*</span>
                   </label>
                   <select
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value)}
-                    className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                   >
                     <option value="USD">USD ($)</option>
                     <option value="EUR">EUR (€)</option>
@@ -412,13 +565,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#222222] mb-1">
-                    Hotel Timezone <span className="text-[#ff385c]">*</span>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                    Hotel Timezone <span className="text-[#1b1938]">*</span>
                   </label>
                   <select
                     value={timezone}
                     onChange={(e) => setTimezone(e.target.value)}
-                    className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                   >
                     <option value="America/New_York">America/New_York (EST)</option>
                     <option value="America/Chicago">America/Chicago (CST)</option>
@@ -439,7 +592,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
           {step === 2 && (
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-[#222222] mb-1">
+                <label className="block text-xs font-semibold text-[#292827] mb-1">
                   Brand Theme Color
                 </label>
                 <div className="flex items-center gap-3">
@@ -447,45 +600,33 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                     type="color"
                     value={primaryColor}
                     onChange={(e) => setPrimaryColor(e.target.value)}
-                    className="w-10 h-10 rounded-xl cursor-pointer border border-[#dddddd] p-1"
+                    className="w-10 h-10 rounded-xl cursor-pointer border border-[#e8e4dd] p-1"
                   />
                   <input
                     type="text"
                     value={primaryColor}
                     onChange={(e) => setPrimaryColor(e.target.value)}
-                    className="bg-white border border-[#dddddd] rounded-xl px-3 py-2 text-xs font-mono text-[#222222]"
+                    className="bg-white border border-[#e8e4dd] rounded-xl px-3 py-2 text-xs font-mono text-[#292827]"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-[#222222] mb-1">
-                  Logo Image URL (Optional)
-                </label>
-                <input
-                  type="url"
-                  value={logoUrl}
-                  onChange={(e) => setLogoUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
-                />
-              </div>
+              <ImageUploader
+                label="Hotel Logo (Optional)"
+                hint="Square logo shown in the sidebar and guest portal header."
+                onFileChange={setLogoFile}
+                thumbClass="h-20"
+              />
+
+              <ImageUploader
+                label="Cover Banner Image (Optional)"
+                hint="Wide banner photo of the property, shown on the hotel profile."
+                onFileChange={setCoverFile}
+                thumbClass="h-20"
+              />
 
               <div>
-                <label className="block text-xs font-semibold text-[#222222] mb-1">
-                  Cover Banner Image URL (Optional)
-                </label>
-                <input
-                  type="url"
-                  value={coverImageUrl}
-                  onChange={(e) => setCoverImageUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#222222] mb-1">
+                <label className="block text-xs font-semibold text-[#292827] mb-1">
                   In-Room Guest Welcome Message
                 </label>
                 <textarea
@@ -493,7 +634,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                   value={welcomeMessage}
                   onChange={(e) => setWelcomeMessage(e.target.value)}
                   placeholder="Welcome to our hotel..."
-                  className="w-full bg-white border border-[#dddddd] rounded-xl p-3 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                  className="w-full bg-white border border-[#e8e4dd] rounded-xl p-3 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                 />
               </div>
             </div>
@@ -502,7 +643,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
           {/* STEP 3: Modules Configuration */}
           {step === 3 && (
             <div className="space-y-3">
-              <p className="text-xs text-[#6a6a6a]">
+              <p className="text-xs text-[#73706d]">
                 Enable or disable specific operational modules for this hotel property:
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -521,9 +662,9 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                 ].map((item) => (
                   <label
                     key={item.key}
-                    className="flex items-center justify-between p-3 rounded-2xl border border-[#ebebeb] hover:border-[#dddddd] cursor-pointer bg-white"
+                    className="flex items-center justify-between p-3 rounded-lg border border-[#e8e4dd] hover:border-[#e8e4dd] cursor-pointer bg-white"
                   >
-                    <span className="text-xs font-medium text-[#222222]">{item.label}</span>
+                    <span className="text-xs font-medium text-[#292827]">{item.label}</span>
                     <input
                       type="checkbox"
                       checked={(modules as any)[item.key]}
@@ -533,7 +674,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                           [item.key]: e.target.checked,
                         }))
                       }
-                      className="w-4 h-4 rounded text-[#ff385c] focus:ring-[#ff385c]"
+                      className="w-4 h-4 rounded text-[#1b1938] focus:ring-[#1b1938]"
                     />
                   </label>
                 ))}
@@ -544,19 +685,19 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
           {/* STEP 4: Hotel Admin Account Credentials */}
           {step === 4 && (
             <div className="space-y-4">
-              <div className="p-3.5 bg-[#f0fdf4] border border-[#bbf7d0] rounded-2xl text-xs text-emerald-800 space-y-1">
-                <div className="font-bold flex items-center gap-1.5 text-emerald-900">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <div className="p-3.5 bg-[#e7efee] border border-[#c9dcd9] rounded-lg text-xs text-[#0e3030] space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-[#0e3030]">
+                  <CheckCircle2 className="w-4 h-4 text-[#155555]" />
                   <span>Secure Firebase Auth User Creation</span>
                 </div>
                 <p>
-                  This will provision a Firebase Auth user without signing out your Super Admin session and store their role in <code className="bg-emerald-100 px-1 py-0.5 rounded font-mono text-[11px]">{`users/{uid} → { role: "hotel_admin", hotelId }`}</code>.
+                  This will provision a Firebase Auth user with custom claim <code className="bg-[#dce7e5] px-1 py-0.5 rounded font-mono text-[11px]">{`{ role: "hotel_admin", hotelId }`}</code> using Firebase Admin SDK.
                 </p>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#222222] mb-1">
-                  Hotel Admin Full Name <span className="text-[#ff385c]">*</span>
+                <label className="block text-xs font-semibold text-[#292827] mb-1">
+                  Hotel Admin Full Name <span className="text-[#1b1938]">*</span>
                 </label>
                 <input
                   type="text"
@@ -564,13 +705,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                   value={adminName}
                   onChange={(e) => setAdminName(e.target.value)}
                   placeholder="e.g. Sarah Jenkins"
-                  className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#222222] mb-1">
-                  Hotel Admin Login Email <span className="text-[#ff385c]">*</span>
+                <label className="block text-xs font-semibold text-[#292827] mb-1">
+                  Hotel Admin Login Email <span className="text-[#1b1938]">*</span>
                 </label>
                 <input
                   type="email"
@@ -578,13 +719,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                   value={adminEmail}
                   onChange={(e) => setAdminEmail(e.target.value)}
                   placeholder="e.g. admin@royalgrand.com"
-                  className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#222222] mb-1">
-                  Login Password (minimum 6 chars) <span className="text-[#ff385c]">*</span>
+                <label className="block text-xs font-semibold text-[#292827] mb-1">
+                  Login Password (minimum 6 chars) <span className="text-[#1b1938]">*</span>
                 </label>
                 <input
                   type="text"
@@ -592,12 +733,12 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                   value={adminPassword}
                   onChange={(e) => setAdminPassword(e.target.value)}
                   placeholder="e.g. hotelPass123"
-                  className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] font-mono focus:outline-none focus:border-[#222222]"
+                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] font-mono focus:outline-none focus:border-[#292827]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#222222] mb-1">
+                <label className="block text-xs font-semibold text-[#292827] mb-1">
                   Admin Phone Number
                 </label>
                 <input
@@ -605,7 +746,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                   value={adminPhone}
                   onChange={(e) => setAdminPhone(e.target.value)}
                   placeholder="e.g. +1 305 555 0123"
-                  className="w-full bg-white border border-[#dddddd] rounded-xl px-3.5 py-2.5 text-sm text-[#222222] focus:outline-none focus:border-[#222222]"
+                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
                 />
               </div>
             </div>
@@ -613,13 +754,13 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         </div>
 
         {/* Modal Footer Controls */}
-        <div className="p-6 border-t border-[#ebebeb] bg-[#fafafa] flex items-center justify-between">
+        <div className="p-6 border-t border-[#e8e4dd] bg-[#fafaf8] flex items-center justify-between">
           {step > 1 ? (
             <button
               type="button"
               onClick={handleBack}
               disabled={isSubmitting}
-              className="px-4 py-2.5 rounded-full border border-[#dddddd] text-xs font-semibold text-[#222222] hover:bg-white transition-colors flex items-center gap-1.5"
+              className="px-4 py-2.5 rounded-full border border-[#e8e4dd] text-xs font-semibold text-[#292827] hover:bg-white transition-colors flex items-center gap-1.5"
             >
               <ArrowLeft className="w-3.5 h-3.5" /> Back
             </button>
@@ -627,7 +768,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-full border border-[#dddddd] text-xs font-semibold text-[#6a6a6a] hover:bg-white transition-colors"
+              className="px-4 py-2.5 rounded-full border border-[#e8e4dd] text-xs font-semibold text-[#73706d] hover:bg-white transition-colors"
             >
               Cancel
             </button>
@@ -637,7 +778,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
             <button
               type="button"
               onClick={handleNext}
-              className="px-6 py-2.5 rounded-full bg-[#222222] hover:bg-black text-xs font-bold text-white transition-colors flex items-center gap-1.5"
+              className="px-6 py-2.5 rounded-full bg-[#292827] hover:bg-black text-xs font-bold text-white transition-colors flex items-center gap-1.5"
             >
               Next Step <ArrowRight className="w-3.5 h-3.5" />
             </button>
@@ -646,7 +787,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
               type="button"
               onClick={handleSubmit}
               disabled={isSubmitting}
-              className="px-6 py-2.5 rounded-full bg-[#ff385c] hover:bg-[#e00b41] text-xs font-bold text-white transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
+              className="px-6 py-2.5 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-xs font-bold text-white transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
             >
               {isSubmitting ? (
                 <>

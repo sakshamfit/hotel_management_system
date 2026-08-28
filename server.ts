@@ -21,6 +21,10 @@ if (!getApps().length) {
 const adminAuth = getAuth();
 const adminFirestore = getFirestore();
 
+// The only account the (unauthenticated) bootstrap endpoint may configure.
+// Must match BOOTSTRAP_SUPER_ADMIN_EMAIL in src/services/superAdminBootstrap.ts.
+const BOOTSTRAP_SUPER_ADMIN_EMAIL = 'ra7650384@gmail.com';
+
 // Middleware to verify Firebase ID token and super_admin claim
 async function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
@@ -56,6 +60,61 @@ async function startServer() {
       projectId: firebaseConfigJson.projectId,
       firestoreDatabaseId: firebaseConfigJson.firestoreDatabaseId,
     });
+  });
+
+  // Bootstrap Super Admin Endpoint
+  // Configures ONLY the platform's designated bootstrap super admin account.
+  // Any other email is rejected so the open endpoint cannot be used to grant
+  // super_admin claims to arbitrary accounts.
+  app.post('/api/auth/bootstrap-super-admin', async (req: Request, res: Response) => {
+    const { email = BOOTSTRAP_SUPER_ADMIN_EMAIL, password, name = 'Master Super Admin' } = req.body;
+    const targetEmail = (email || '').toLowerCase().trim();
+
+    if (targetEmail !== BOOTSTRAP_SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({
+        error: 'Forbidden: this endpoint only configures the platform bootstrap super admin account.',
+      });
+    }
+
+    try {
+      let userRecord: UserRecord;
+      try {
+        userRecord = await adminAuth.getUserByEmail(targetEmail);
+      } catch (notFoundErr: any) {
+        // User does not exist, create it
+        userRecord = await adminAuth.createUser({
+          email: targetEmail,
+          password: typeof password === 'string' && password.length >= 6 ? password : 'admin123',
+          displayName: name,
+          emailVerified: true,
+        });
+      }
+
+      // If user exists and a new password was provided (>= 6 chars), update password
+      if (password && password.length >= 6) {
+        try {
+          await adminAuth.updateUser(userRecord.uid, { password });
+        } catch (updateErr) {
+          console.warn('Could not update password:', updateErr);
+        }
+      }
+
+      // Assign Super Admin custom claim
+      await adminAuth.setCustomUserClaims(userRecord.uid, {
+        role: 'super_admin',
+      });
+
+      return res.json({
+        success: true,
+        message: `Super Admin account ${targetEmail} configured with super_admin claim.`,
+        uid: userRecord.uid,
+        email: userRecord.email,
+        role: 'super_admin',
+      });
+    } catch (err: any) {
+      console.error('Error bootstrapping Super Admin:', err);
+      return res.status(500).json({ error: err.message || 'Failed to bootstrap Super Admin' });
+    }
   });
 
   // Create Hotel Admin User via Firebase Admin SDK
@@ -180,7 +239,7 @@ async function startServer() {
   // Vite integration
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, allowedHosts: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);

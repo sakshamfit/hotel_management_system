@@ -1,63 +1,196 @@
 @import "tailwindcss";
 
-@layer base {
-  :root {
-    --font-sans: -apple-system, BlinkMacSystemFont, 'Circular', 'Plus Jakarta Sans', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    --font-mono: 'JetBrains Mono', monospace;
-    
-    /* Airbnb Color Tokens */
-    --color-rausch: #ff385c;
-    --color-rausch-active: #e00b41;
-    --color-rausch-disabled: #ffd1da;
-    --color-ink: #222222;
-    --color-body: #3f3f3f;
-    --color-muted: #6a6a6a;
-    --color-muted-soft: #929292;
-    --color-hairline: #dddddd;
-    --color-hairline-soft: #ebebeb;
-    --color-border-strong: #c1c1c1;
-    --color-canvas: #ffffff;
-    --color-surface-soft: #f7f7f7;
-    --color-surface-strong: #f2f2f2;
-  }
+/* ============================================================
+   NEXORA HOTEL OS — Superhumon Design Language
+   Three-canvas system: indigo navy hero / white body / deep-teal band
+   ============================================================ */
 
+@theme {
+  /* Brand & accent */
+  --color-primary: #1b1938;        /* indigo navy — hero canvas, primary CTA */
+  --color-primary-deep: #0e0c1f;   /* pressed-state indigo */
+  --color-on-primary: #ffffff;
+  --color-violet-soft: #c9b4fa;    /* pale violet — hero pill fill */
+  --color-violet-tint: #ece6fb;    /* pale violet tint — light badges */
+  --color-teal-deep: #0e3030;      /* closing CTA band */
+  --color-teal-mid: #155555;       /* lifted teal — success / nested chrome */
+  --color-teal-tint: #e7efee;      /* teal tint — light success surfaces */
+  --color-teal-line: #c9dcd9;      /* teal hairline on tints */
+
+  /* Light surfaces */
+  --color-canvas: #ffffff;
+  --color-canvas-soft: #fafaf8;    /* barely-warm off-white */
+  --color-hairline: #e8e4dd;       /* warm grey 1px border */
+  --color-hairline-dark: #3f3a52;  /* border on dark surfaces / outline buttons */
+
+  /* Ink */
+  --color-ink: #292827;            /* warm dark grey — never pure black */
+  --color-ink-mute: #73706d;
+  --color-ink-faint: #9a9794;
+
+  /* On-dark ink */
+  --color-on-dark-mute: #bcbac9;
+  --color-on-dark-faint: #5a5772;
+
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
   body {
     font-family: var(--font-sans);
-    background-color: #ffffff;
-    color: #222222;
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-weight: 460;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Airbnb subtle scrollbars */
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  ::-webkit-scrollbar-track {
-    background: #f7f7f7;
-  }
-  ::-webkit-scrollbar-thumb {
-    background: #dddddd;
-    border-radius: 9999px;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: #c1c1c1;
+  /* Quiet warm scrollbars */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--color-canvas-soft); }
+  ::-webkit-scrollbar-thumb { background: var(--color-hairline); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-ink-faint); }
+}
+
+/* ------------------------------------------------------------
+   Typography — sub-default variable weights (460 / 540)
+   ------------------------------------------------------------ */
+@layer utilities {
+  .t-display-xxl { font-size: 64px; font-weight: 540; line-height: 0.96; letter-spacing: 0; }
+  .t-display-xl  { font-size: 48px; font-weight: 460; line-height: 0.96; letter-spacing: -1.32px; }
+  .t-display-lg  { font-size: 28px; font-weight: 540; line-height: 1.14; letter-spacing: -0.63px; }
+  .t-display-md  { font-size: 22px; font-weight: 460; line-height: 1.1;  letter-spacing: -0.315px; }
+  .t-heading-lg  { font-size: 20px; font-weight: 460; line-height: 1.2;  letter-spacing: -0.4px; }
+  .t-body-lg     { font-size: 18px;    font-weight: 540; line-height: 1.5; letter-spacing: -0.135px; }
+  .t-body-md     { font-size: 16px;    font-weight: 460; line-height: 1.5; }
+  .t-body-strong { font-size: 18.72px; font-weight: 700; line-height: 1.5; }
+  .t-button-md   { font-size: 16px; font-weight: 700; line-height: 1; letter-spacing: 0; }
+  .t-button-cap  { font-size: 14px; font-weight: 600; line-height: 1; letter-spacing: 0; }
+  .t-caption     { font-size: 14px; font-weight: 460; line-height: 1.4; }
+  .t-micro       { font-size: 12px; font-weight: 540; line-height: 1.4; }
+
+  @media (max-width: 767px) {
+    .t-display-xxl { font-size: 36px; letter-spacing: -0.5px; }
+    .t-display-xl  { font-size: 30px; letter-spacing: -0.66px; }
+    .t-display-lg  { font-size: 24px; letter-spacing: -0.48px; }
+    .t-display-md  { font-size: 19px; letter-spacing: -0.27px; }
+    .t-body-lg     { font-size: 16px; }
+    .t-body-strong { font-size: 16px; }
   }
 }
 
-.airbnb-card-shadow {
-  box-shadow: rgba(0, 0, 0, 0.02) 0 0 0 1px, rgba(0, 0, 0, 0.04) 0 2px 6px 0, rgba(0, 0, 0, 0.08) 0 4px 12px 0;
-}
+/* ------------------------------------------------------------
+   Components
+   ------------------------------------------------------------ */
+@layer components {
+  /* Buttons — rounded rectangles on light surfaces; pill only on hero */
+  .btn-primary-dark {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    background-color: var(--color-primary); color: var(--color-on-primary);
+    border-radius: 8px; padding: 12px 20px;
+    font-size: 14px; font-weight: 700; line-height: 1;
+    transition: background-color .15s ease, transform .1s ease;
+  }
+  .btn-primary-dark:hover { background-color: var(--color-primary-deep); }
+  .btn-primary-dark:active { background-color: var(--color-primary-deep); transform: translateY(1px); }
+  .btn-primary-dark:disabled { opacity: .45; cursor: not-allowed; }
 
-.airbnb-popover-shadow {
-  box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-}
+  .btn-on-dark-pill {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    background-color: var(--color-violet-soft); color: var(--color-primary);
+    border-radius: 9999px; padding: 12px 20px;
+    font-size: 14px; font-weight: 700; line-height: 1;
+    transition: background-color .15s ease;
+  }
+  .btn-on-dark-pill:hover { background-color: #d6c5fb; }
 
-.airbnb-pill-shadow {
-  box-shadow: 0 3px 12px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
-}
+  .btn-secondary-outline {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    background-color: var(--color-canvas); color: var(--color-ink);
+    border: 1px solid var(--color-hairline-dark);
+    border-radius: 8px; padding: 12px 20px;
+    font-size: 14px; font-weight: 700; line-height: 1;
+    transition: border-color .15s ease, background-color .15s ease;
+  }
+  .btn-secondary-outline:hover { background-color: var(--color-canvas-soft); }
 
+  .btn-on-teal {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    background-color: var(--color-canvas); color: var(--color-teal-deep);
+    border-radius: 8px; padding: 12px 20px;
+    font-size: 14px; font-weight: 700; line-height: 1;
+    transition: background-color .15s ease;
+  }
+  .btn-on-teal:hover { background-color: #e6e2db; }
+
+  /* Inputs — 6px radius, warm hairline */
+  .input-super {
+    width: 100%;
+    background-color: var(--color-canvas); color: var(--color-ink);
+    border: 1px solid var(--color-hairline);
+    border-radius: 6px; padding: 10px 12px;
+    font-size: 14px; font-weight: 460; line-height: 1.5;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .input-super::placeholder { color: var(--color-ink-faint); }
+  .input-super:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px rgba(27,25,56,0.08); }
+
+  /* Cards */
+  .card-feature-light {
+    background-color: var(--color-canvas);
+    border: 1px solid var(--color-hairline);
+    border-radius: 12px;
+  }
+  .card-feature-row {
+    background-color: var(--color-canvas-soft);
+    border: 1px solid var(--color-hairline);
+    border-radius: 8px;
+  }
+  .card-teal-band {
+    background-color: var(--color-teal-deep);
+    color: var(--color-on-primary);
+    border-radius: 12px;
+  }
+
+  /* Pill tabs (feature category picker) */
+  .pill-tab-light {
+    display: inline-flex; align-items: center; gap: 6px;
+    background-color: var(--color-canvas); color: var(--color-ink);
+    border: 1px solid var(--color-hairline);
+    border-radius: 9999px; padding: 8px 16px;
+    font-size: 12px; font-weight: 600; line-height: 1;
+    transition: all .15s ease;
+  }
+  .pill-tab-light:hover { background-color: var(--color-canvas-soft); }
+  .pill-tab-light[data-active="true"] {
+    background-color: var(--color-primary); border-color: var(--color-primary);
+    color: var(--color-on-primary);
+  }
+
+  /* Elevation */
+  .elev-1 { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); }
+  .elev-2 { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
+
+  /* Hero atmospheric backdrop — violet-sky radial wash over indigo */
+  .atmosphere {
+    background-color: var(--color-primary);
+    background-image:
+      radial-gradient(52% 68% at 78% 22%, rgba(201, 180, 250, 0.34) 0%, rgba(201, 180, 250, 0) 62%),
+      radial-gradient(38% 52% at 62% 78%, rgba(120, 161, 219, 0.26) 0%, rgba(120, 161, 219, 0) 70%),
+      radial-gradient(70% 90% at 12% 8%, rgba(14, 12, 31, 0.6) 0%, rgba(14, 12, 31, 0) 60%),
+      linear-gradient(168deg, #1b1938 0%, #171530 46%, #0e0c1f 100%);
+  }
+
+  /* Hairline tag (4px radius micro label) */
+  .tag-hairline {
+    display: inline-flex; align-items: center; gap: 4px;
+    border: 1px solid var(--color-hairline);
+    border-radius: 4px; padding: 2px 8px;
+    font-size: 11px; font-weight: 600; line-height: 1.4;
+    color: var(--color-ink-mute);
+  }
+}
 /* Order alert toast slide-in */
 @keyframes navOrderIn {
   from {

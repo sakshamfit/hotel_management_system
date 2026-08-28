@@ -66,19 +66,19 @@ export const HousekeepingTab: React.FC<Props> = ({ hotel }) => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-white border border-[#ebebeb] p-6 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+      <div className="bg-white border border-[#e8e4dd] p-6 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-[#fff0f3] border border-[#ffd1da] flex items-center justify-center text-[#ff385c]">
+          <div className="w-12 h-12 rounded-lg bg-[#ece6fb] border border-[#c9b4fa] flex items-center justify-center text-[#1b1938]">
             <BedDouble className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-[#222222]">Housekeeping & Amenities Desk</h2>
-              <span className="bg-[#fff0f3] text-[#ff385c] border border-[#ffd1da] text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full font-bold">
+              <h2 className="t-display-md">Housekeeping & Amenities Desk</h2>
+              <span className="bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full font-bold">
                 Staff Hub
               </span>
             </div>
-            <p className="text-xs text-[#6a6a6a]">
+            <p className="text-xs text-[#73706d]">
               Linen refresh • Towels & Water • Room Cleaning • Toiletries dispatch
             </p>
           </div>
@@ -87,50 +87,50 @@ export const HousekeepingTab: React.FC<Props> = ({ hotel }) => {
 
       {/* Task Summary Badges */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-        <div className="bg-white border border-[#ebebeb] p-5 rounded-3xl shadow-xs">
-          <span className="text-xs text-[#6a6a6a] font-medium">Pending Tasks</span>
-          <div className="text-2xl font-bold text-[#ff385c] mt-1 font-mono">{activeTasks.length}</div>
+        <div className="bg-white border border-[#e8e4dd] p-5 rounded-xl shadow-xs">
+          <span className="text-xs text-[#73706d] font-medium">Pending Tasks</span>
+          <div className="text-2xl font-bold text-[#1b1938] mt-1 font-mono">{activeTasks.length}</div>
         </div>
-        <div className="bg-white border border-[#ebebeb] p-5 rounded-3xl shadow-xs">
-          <span className="text-xs text-[#6a6a6a] font-medium">Completed Tasks</span>
-          <div className="text-2xl font-bold text-emerald-600 mt-1 font-mono">{completedTasks.length}</div>
+        <div className="bg-white border border-[#e8e4dd] p-5 rounded-xl shadow-xs">
+          <span className="text-xs text-[#73706d] font-medium">Completed Tasks</span>
+          <div className="text-2xl font-bold text-[#155555] mt-1 font-mono">{completedTasks.length}</div>
         </div>
-        <div className="bg-white border border-[#ebebeb] p-5 rounded-3xl shadow-xs col-span-2 sm:col-span-1">
-          <span className="text-xs text-[#6a6a6a] font-medium">Total Housekeeping Logs</span>
-          <div className="text-2xl font-bold text-[#222222] mt-1 font-mono">{tasks.length}</div>
+        <div className="bg-white border border-[#e8e4dd] p-5 rounded-xl shadow-xs col-span-2 sm:col-span-1">
+          <span className="text-xs text-[#73706d] font-medium">Total Housekeeping Logs</span>
+          <div className="text-2xl font-bold text-[#292827] mt-1 font-mono">{tasks.length}</div>
         </div>
       </div>
 
       {/* Search Bar */}
-      <div className="flex items-center justify-between bg-white p-3.5 rounded-2xl border border-[#ebebeb]">
+      <div className="flex items-center justify-between bg-white p-3.5 rounded-lg border border-[#e8e4dd]">
         <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#6a6a6a]" />
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#73706d]" />
           <input
             type="text"
             placeholder="Search by Room or Request details..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-[#fafafa] border border-[#dddddd] rounded-xl pl-9 pr-3.5 py-2 text-xs text-[#222222] focus:outline-none focus:border-[#222222]"
+            className="w-full bg-[#fafaf8] border border-[#e8e4dd] rounded-xl pl-9 pr-3.5 py-2 text-xs text-[#292827] focus:outline-none focus:border-[#292827]"
           />
         </div>
       </div>
 
       {/* Task List or Empty State */}
       {loading ? (
-        <div className="bg-white border border-[#ebebeb] rounded-3xl p-12 text-center">
-          <div className="w-8 h-8 border-2 border-[#ff385c] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-[#6a6a6a] mt-3">Loading housekeeping tasks...</p>
+        <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center">
+          <div className="w-8 h-8 border-2 border-[#1b1938] border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs text-[#73706d] mt-3">Loading housekeeping tasks...</p>
         </div>
       ) : filteredTasks.length === 0 ? (
-        <div className="bg-white border border-[#ebebeb] rounded-3xl p-12 text-center space-y-3 shadow-xs">
-          <div className="w-16 h-16 rounded-full bg-[#fff0f3] text-[#ff385c] border border-[#ffd1da] flex items-center justify-center mx-auto">
+        <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center space-y-3 shadow-xs">
+          <div className="w-16 h-16 rounded-full bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] flex items-center justify-center mx-auto">
             <BedDouble className="w-8 h-8" />
           </div>
           <div className="space-y-1 max-w-sm mx-auto">
-            <h3 className="text-base font-bold text-[#222222]">
+            <h3 className="text-base font-bold text-[#292827]">
               {searchQuery ? 'No matching housekeeping tasks' : 'No Active Housekeeping Requests'}
             </h3>
-            <p className="text-xs text-[#6a6a6a]">
+            <p className="text-xs text-[#73706d]">
               {searchQuery
                 ? 'Try searching with another room number.'
                 : 'When guests request room cleaning, extra towels, or amenities from their room QR portal, they will be queued here.'}
@@ -144,18 +144,18 @@ export const HousekeepingTab: React.FC<Props> = ({ hotel }) => {
             return (
               <div
                 key={task.id}
-                className="bg-white border border-[#ebebeb] hover:border-[#dddddd] rounded-3xl p-5 shadow-xs flex flex-col justify-between"
+                className="bg-white border border-[#e8e4dd] hover:border-[#e8e4dd] rounded-xl p-5 shadow-xs flex flex-col justify-between"
               >
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-bold bg-[#fafafa] border border-[#dddddd] px-2.5 py-1 rounded-xl text-[#222222]">
+                    <span className="text-xs font-mono font-bold bg-[#fafaf8] border border-[#e8e4dd] px-2.5 py-1 rounded-xl text-[#292827]">
                       Room {task.roomNumber}
                     </span>
                     <span
                       className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full ${
                         isCompleted
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : 'bg-[#fff0f3] text-[#ff385c] border border-[#ffd1da]'
+                          ? 'bg-[#e7efee] text-[#0e3030] border border-[#c9dcd9]'
+                          : 'bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa]'
                       }`}
                     >
                       {task.status || 'PENDING'}
@@ -163,34 +163,34 @@ export const HousekeepingTab: React.FC<Props> = ({ hotel }) => {
                   </div>
 
                   <div>
-                    <div className="text-xs text-[#6a6a6a]">Guest: <strong className="text-[#222222]">{task.guestName || 'Guest'}</strong></div>
+                    <div className="text-xs text-[#73706d]">Guest: <strong className="text-[#292827]">{task.guestName || 'Guest'}</strong></div>
                     {task.items && task.items.length > 0 && (
                       <div className="mt-2 space-y-1">
                         {task.items.map((it: any, idx: number) => (
-                          <div key={idx} className="text-xs font-semibold text-[#222222]">
+                          <div key={idx} className="text-xs font-semibold text-[#292827]">
                             • {it.quantity || 1}x {it.name}
                           </div>
                         ))}
                       </div>
                     )}
                     {task.instructions && (
-                      <p className="text-xs text-[#6a6a6a] mt-2 bg-[#fafafa] p-2.5 rounded-xl border border-[#ebebeb]">
+                      <p className="text-xs text-[#73706d] mt-2 bg-[#fafaf8] p-2.5 rounded-xl border border-[#e8e4dd]">
                         "{task.instructions}"
                       </p>
                     )}
                   </div>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-[#ebebeb]">
+                <div className="mt-4 pt-3 border-t border-[#e8e4dd]">
                   {!isCompleted ? (
                     <button
                       onClick={() => handleUpdateStatus(task.id, 'COMPLETED')}
-                      className="w-full py-2.5 px-3 rounded-full bg-[#ff385c] hover:bg-[#e00b41] text-white text-xs font-bold shadow-sm transition-colors"
+                      className="w-full py-2.5 px-3 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-sm transition-colors"
                     >
                       Mark Room Serviced
                     </button>
                   ) : (
-                    <div className="text-xs text-emerald-600 font-semibold flex items-center justify-center gap-1 py-1">
+                    <div className="text-xs text-[#155555] font-semibold flex items-center justify-center gap-1 py-1">
                       <CheckCircle2 className="w-3.5 h-3.5" /> Service Completed
                     </div>
                   )}

@@ -9,6 +9,7 @@ import {
 } from 'firebase/auth';
 import { auth } from '../firebase/config';
 import { firestoreService } from '../services/firestoreService';
+import { ensureSuperAdminBootstrapped, BOOTSTRAP_SUPER_ADMIN_EMAIL } from '../services/superAdminBootstrap';
 import { User, Hotel, UserRole } from '../types';
 
 interface AuthContextType {
@@ -41,6 +42,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [allHotels, setAllHotels] = useState<Hotel[]>([]);
   const [selectedTenantId, setSelectedTenantIdState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [bootstrapSettled, setBootstrapSettled] = useState<boolean>(false);
+
+  // One-time super admin bootstrap — runs BEFORE the login screen appears.
+  // Silently ensures the first super_admin account exists (skips forever once
+  // one exists). Never blocks the app on failure.
+  useEffect(() => {
+    let cancelled = false;
+    ensureSuperAdminBootstrapped()
+      .catch((err) => console.warn('[super-admin-bootstrap] skipped:', err?.message))
+      .finally(() => {
+        if (!cancelled) setBootstrapSettled(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Check URL token for Guest Room QR scan
   useEffect(() => {
@@ -75,8 +92,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         hotelId = docUser?.hotelId || (tokenResult.claims.hotelId as string | undefined);
       }
 
+      // Bootstrap-created admin: claim may not be set yet (no Cloud Functions on
+      // the free plan) — ask the app server (Admin SDK) to attach it, then re-read.
+      if (role !== 'super_admin' && role !== 'hotel_admin' && fbUser.email?.toLowerCase() === BOOTSTRAP_SUPER_ADMIN_EMAIL) {
+        try {
+          await firestoreService.bootstrapSuperAdmin(fbUser.email);
+          tokenResult = await fbUser.getIdTokenResult(true);
+          role = (docUser?.role as string | undefined) || (tokenResult.claims.role as string | undefined);
+          hotelId = docUser?.hotelId || (tokenResult.claims.hotelId as string | undefined);
+        } catch (e) {
+          console.warn('Auto-bootstrap error:', e);
+        }
+      }
+
       // A valid role MUST come from the Firestore users/{uid} doc or the ID token.
-      // No hardcoded email / bootstrap fallback. Users without a role are signed out.
+      // No other email fallbacks. Users without a role are signed out.
       if (role !== 'super_admin' && role !== 'hotel_admin') {
         console.warn(`User ${fbUser.uid} (${fbUser.email}) has no provisioned role. Signing out.`);
         await signOut(auth);
@@ -259,7 +289,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         guestRoomToken,
         setGuestRoomToken,
         allHotels,
-        isLoading,
+        // Keep the splash visible until the one-time bootstrap check settles
+        isLoading: isLoading || !bootstrapSettled,
         selectedTenantId,
         setSelectedTenantId,
         loginWithCredentials,
