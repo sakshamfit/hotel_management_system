@@ -1,40 +1,30 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { firestoreService } from '../../services/firestoreService';
 import {
   Building2,
   Lock,
   Mail,
-  ShieldCheck,
   Eye,
   EyeOff,
   ArrowRight,
   AlertCircle,
-  Sparkles,
-  KeyRound,
-  CheckCircle2,
-  ExternalLink,
-  Zap,
 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
-  const { loginWithCredentials, loginWithGoogle, loginAsDevRole } = useAuth();
+  const { loginWithCredentials, loginWithGoogle } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isIdentityToolkitError, setIsIdentityToolkitError] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setIsIdentityToolkitError(false);
-    setSuccessMessage(null);
     setLoading(true);
 
     try {
@@ -49,7 +39,7 @@ export const LoginPage: React.FC = () => {
         err.code === 'auth/operation-not-allowed'
       ) {
         setIsIdentityToolkitError(true);
-        msg = 'Firebase Identity Toolkit API is pending activation on Google Cloud project 268701568128. Enable it or use Instant Preview below.';
+        msg = 'Firebase Identity Toolkit API is pending activation on Google Cloud project. Please enable it to authenticate with Firebase.';
       } else if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         msg = 'Invalid email or password. If this is a newly created hotel, please verify the exact email and password set by the Super Admin.';
       } else if (err.code === 'auth/too-many-requests') {
@@ -76,28 +66,6 @@ export const LoginPage: React.FC = () => {
       setErrorMessage(msg);
     } finally {
       setGoogleLoading(false);
-    }
-  };
-
-  // Helper for initial Super Admin setup
-  const handleSetupSuperAdmin = async () => {
-    setBootstrapLoading(true);
-    setErrorMessage(null);
-    setIsIdentityToolkitError(false);
-    setSuccessMessage(null);
-    try {
-      await firestoreService.bootstrapSuperAdmin('admin@raees.com', 'admin123');
-      setEmail('admin@raees.com');
-      setPassword('admin123');
-      setSuccessMessage('Super Admin initialized! Click "Sign In" to access the Super Admin Panel.');
-    } catch (err: any) {
-      let msg = err.message || 'Failed to initialize Super Admin account.';
-      if (msg.includes('identitytoolkit.googleapis.com') || msg.includes('Identity Toolkit API')) {
-        setIsIdentityToolkitError(true);
-      }
-      setErrorMessage(msg);
-    } finally {
-      setBootstrapLoading(false);
     }
   };
 
@@ -148,16 +116,8 @@ export const LoginPage: React.FC = () => {
                 <span>Sandbox Cloud Environment Active</span>
               </div>
               <p className="text-[11px] leading-relaxed text-[#7c5e10]">
-                The internal Google Cloud container project uses managed credentials. You do not need to access the Google Cloud Console or configure IAM permissions. Use the <strong>Instant Experience Launch</strong> buttons below to immediately manage hotels, rooms, POS, and guest orders.
+                The internal Google Cloud container project uses managed credentials. You do not need to access the Google Cloud Console or configure IAM permissions.
               </p>
-            </div>
-          )}
-
-          {/* Success Banner */}
-          {successMessage && (
-            <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-2xl p-3.5 text-xs text-emerald-700 flex items-start gap-2.5">
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
-              <span>{successMessage}</span>
             </div>
           )}
 
@@ -184,7 +144,7 @@ export const LoginPage: React.FC = () => {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@raees.com or hotel admin email"
+                  placeholder="your admin email"
                   className="w-full bg-white border border-[#dddddd] rounded-2xl pl-10 pr-4 py-3 text-sm text-[#222222] placeholder-[#a0a0a0] focus:outline-none focus:border-[#222222] focus:ring-1 focus:ring-[#222222] transition-colors"
                 />
               </div>
@@ -267,52 +227,6 @@ export const LoginPage: React.FC = () => {
               </svg>
               <span>{googleLoading ? 'Signing in with Google...' : 'Sign In with Google (Pre-Configured)'}</span>
             </button>
-          </div>
-
-          {/* Instant Interactive Preview & Role Access */}
-          <div className="pt-4 border-t border-[#ebebeb] space-y-3">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-[#222222]">
-              <Zap className="w-3.5 h-3.5 text-amber-500" />
-              <span>Instant Experience Launch</span>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => loginAsDevRole('super_admin')}
-                className="p-3 bg-[#f7f7f7] hover:bg-[#ebebeb] border border-[#dddddd] rounded-xl text-left transition-colors text-xs space-y-0.5"
-              >
-                <div className="font-bold text-[#222222] flex items-center justify-between">
-                  <span>Super Admin</span>
-                  <ArrowRight className="w-3 h-3 text-[#6a6a6a]" />
-                </div>
-                <div className="text-[11px] text-[#6a6a6a]">Manage all hotels & billing</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => loginAsDevRole('hotel_admin')}
-                className="p-3 bg-[#f7f7f7] hover:bg-[#ebebeb] border border-[#dddddd] rounded-xl text-left transition-colors text-xs space-y-0.5"
-              >
-                <div className="font-bold text-[#222222] flex items-center justify-between">
-                  <span>Hotel Admin</span>
-                  <ArrowRight className="w-3 h-3 text-[#6a6a6a]" />
-                </div>
-                <div className="text-[11px] text-[#6a6a6a]">Rooms, POS & Operations</div>
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between text-[11px] font-semibold text-[#6a6a6a] pt-1">
-              <span>Cloud Admin Bootstrap:</span>
-              <button
-                type="button"
-                onClick={handleSetupSuperAdmin}
-                disabled={bootstrapLoading}
-                className="text-[#ff385c] hover:underline font-bold inline-flex items-center gap-1"
-              >
-                <KeyRound className="w-3 h-3" />
-                {bootstrapLoading ? 'Initializing...' : 'Sync admin@raees.com'}
-              </button>
-            </div>
           </div>
         </div>
       </main>

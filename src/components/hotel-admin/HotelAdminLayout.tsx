@@ -9,6 +9,7 @@ import { GuestCheckinTab } from './GuestCheckinTab';
 import { FoodMenuTab } from './FoodMenuTab';
 import { ServicesTab } from './ServicesTab';
 import { DailyReportsTab } from './DailyReportsTab';
+import { NewOrderAlertCenter } from '../common/NewOrderAlertCenter';
 import {
   LayoutDashboard,
   Clock,
@@ -134,6 +135,9 @@ export const HotelAdminLayout: React.FC = () => {
         {activeTab === 'services' && <ServicesTab hotel={hotel} />}
         {activeTab === 'daily_reports' && <DailyReportsTab hotel={hotel} />}
       </main>
+
+      {/* Audio + voice new-order alerts (real-time) */}
+      <NewOrderAlertCenter hotels={hotel ? [hotel] : []} />
     </div>
   );
 };

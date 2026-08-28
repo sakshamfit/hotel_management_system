@@ -7,30 +7,46 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isSuperAdmin() {
-      return isAuthenticated() && 
-        request.auth.token.role == 'super_admin';
+    // Read the caller's role document (users/{request.auth.uid}).
+    // Used as the PRIMARY role source (free-tier, no custom claims required).
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    function isHotelAdmin(hotelId) {
-      return isAuthenticated() && 
-        (
-          request.auth.token.role == 'super_admin' || 
-          (request.auth.token.role == 'hotel_admin' && request.auth.token.hotelId == hotelId)
-        );
+    // Super Admin: custom claim (legacy / Admin SDK fallback) OR Firestore role doc
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'super_admin' ||
+        getUserData().role == 'super_admin'
+      );
+    }
+
+    // Hotel Admin of a given hotel: custom claim (legacy) OR Firestore users doc
+    function isHotelAdminOf(hotelId) {
+      return isAuthenticated() && (
+        request.auth.token.role == 'super_admin' ||
+        (request.auth.token.role == 'hotel_admin' && request.auth.token.hotelId == hotelId) ||
+        (getUserData().role == 'hotel_admin' && getUserData().hotelId == hotelId)
+      );
+    }
+
+    // users collection: each user can read their own doc; only Super Admin can write
+    match /users/{userId} {
+      allow read: if request.auth.uid == userId || isSuperAdmin();
+      allow write: if isSuperAdmin();
     }
 
     // Hotel documents
     match /hotels/{hotelId} {
       // Super admin has full read/write on all hotels
       // Hotel admin can read and update their own hotel profile
-      allow read: if isSuperAdmin() || isHotelAdmin(hotelId);
+      allow read: if isSuperAdmin() || isHotelAdminOf(hotelId);
       allow create, delete: if isSuperAdmin();
-      allow update: if isSuperAdmin() || isHotelAdmin(hotelId);
+      allow update: if isSuperAdmin() || isHotelAdminOf(hotelId);
 
       // All subcollections under a specific hotel
       match /{subcollection}/{document=**} {
-        allow read, write: if isHotelAdmin(hotelId);
+        allow read, write: if isSuperAdmin() || isHotelAdminOf(hotelId);
       }
     }
 

@@ -3,6 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth, UserRecord } from 'firebase-admin/auth';
+import { getFirestore } from 'firebase-admin/firestore';
 import firebaseConfigJson from './firebase-applet-config.json';
 
 // Initialize Firebase Admin SDK
@@ -18,6 +19,7 @@ if (!getApps().length) {
 }
 
 const adminAuth = getAuth();
+const adminFirestore = getFirestore();
 
 // Middleware to verify Firebase ID token and super_admin claim
 async function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
@@ -54,53 +56,6 @@ async function startServer() {
       projectId: firebaseConfigJson.projectId,
       firestoreDatabaseId: firebaseConfigJson.firestoreDatabaseId,
     });
-  });
-
-  // Bootstrap Super Admin Endpoint
-  // Allows setting up or setting custom claims for the master super_admin account
-  app.post('/api/auth/bootstrap-super-admin', async (req: Request, res: Response) => {
-    const { email = 'admin@raees.com', password = 'admin', name = 'Master Super Admin (Raees HQ)' } = req.body;
-    const targetEmail = (email || '').toLowerCase().trim();
-
-    try {
-      let userRecord: UserRecord;
-      try {
-        userRecord = await adminAuth.getUserByEmail(targetEmail);
-      } catch (notFoundErr: any) {
-        // User does not exist, create it
-        userRecord = await adminAuth.createUser({
-          email: targetEmail,
-          password: password.length >= 6 ? password : 'admin123',
-          displayName: name,
-          emailVerified: true,
-        });
-      }
-
-      // If user exists and a new password was provided (>= 6 chars), update password
-      if (password && password.length >= 6) {
-        try {
-          await adminAuth.updateUser(userRecord.uid, { password });
-        } catch (updateErr) {
-          console.warn('Could not update password:', updateErr);
-        }
-      }
-
-      // Assign Super Admin custom claim
-      await adminAuth.setCustomUserClaims(userRecord.uid, {
-        role: 'super_admin',
-      });
-
-      return res.json({
-        success: true,
-        message: `Super Admin account ${targetEmail} configured with super_admin claim.`,
-        uid: userRecord.uid,
-        email: userRecord.email,
-        role: 'super_admin',
-      });
-    } catch (err: any) {
-      console.error('Error bootstrapping Super Admin:', err);
-      return res.status(500).json({ error: err.message || 'Failed to bootstrap Super Admin' });
-    }
   });
 
   // Create Hotel Admin User via Firebase Admin SDK
@@ -147,6 +102,20 @@ async function startServer() {
         hotelId,
       });
 
+      // Persist role in Firestore users/{uid} so client-side role lookup works
+      // (free tier: role lives in Firestore, token may not carry custom claims yet).
+      await adminFirestore.collection('users').doc(userRecord.uid).set(
+        {
+          role: 'hotel_admin',
+          hotelId,
+          email: trimmedEmail,
+          displayName: name || `${hotelName} Admin`,
+          phone: phone || '',
+          createdAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
       return res.json({
         success: true,
         isNew,
@@ -171,6 +140,14 @@ async function startServer() {
 
     try {
       const userRecord = await adminAuth.getUserByEmail(email.toLowerCase().trim());
+
+      // Remove the Firestore role document too (best effort)
+      try {
+        await adminFirestore.collection('users').doc(userRecord.uid).delete();
+      } catch (firestoreErr: any) {
+        console.warn('Could not delete users/{uid} role doc:', firestoreErr.message);
+      }
+
       await adminAuth.deleteUser(userRecord.uid);
       return res.json({ success: true, message: `User ${email} deleted from Firebase Auth` });
     } catch (err: any) {
