@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { firestoreService } from '../../services/firestoreService';
+import { deleteFolder } from '../../services/storageService';
 import { Hotel } from '../../types';
 import { CreateHotelWizardModal } from './CreateHotelWizardModal';
 import {
@@ -62,6 +63,8 @@ export const SuperAdminDashboard: React.FC = () => {
       if (h.adminCredentials?.email || h.email) {
         await firestoreService.deleteHotelUserAuth(h.adminCredentials?.email || h.email || '');
       }
+      // Cleanup: purge all uploaded images under hotels/{hotelId}/ in Storage
+      await deleteFolder(`hotels/${h.id}`);
     } catch (err: any) {
       alert(err.message || 'Failed to delete hotel');
     } finally {
@@ -247,14 +250,21 @@ export const SuperAdminDashboard: React.FC = () => {
                   className="bg-white border border-[#e8e4dd] hover:border-[#e8e4dd] rounded-xl overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
                 >
                   <div>
-                    {/* Cover or Header color */}
+                    {/* Cover banner (uploaded to Storage) or brand color */}
                     <div
-                      className="h-28 bg-[#fafaf8] relative flex items-center justify-center p-4"
+                      className="h-28 relative flex items-center justify-center p-4 overflow-hidden"
                       style={{
                         backgroundColor: h.branding?.primaryColor ? `${h.branding.primaryColor}15` : '#ece6fb',
                       }}
                     >
-                      <div className="flex items-center gap-3">
+                      {h.branding?.coverImageUrl && (
+                        <img
+                          src={h.branding.coverImageUrl}
+                          alt=""
+                          className="absolute inset-0 w-full h-full object-cover"
+                        />
+                      )}
+                      <div className={`flex items-center gap-3 ${h.branding?.coverImageUrl ? 'relative' : ''}`}>
                         <div
                           className="w-12 h-12 rounded-lg flex items-center justify-center font-bold text-white shadow-sm text-lg"
                           style={{

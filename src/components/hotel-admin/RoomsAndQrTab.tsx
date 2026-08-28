@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { firestoreService } from '../../services/firestoreService';
+import { deleteImageByUrl } from '../../services/storageService';
+import { ImageUploader } from '../common/ImageUploader';
 import { Hotel, Room } from '../../types';
 import { generateQrDataUrl } from '../../utils/qr';
 import { useAuth } from '../../context/AuthContext';
@@ -102,6 +104,8 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
     if (window.confirm(`Delete Room ${room.roomNumber}?`)) {
       try {
         await firestoreService.deleteRoom(hotel.id, room.id);
+        // Cleanup: remove the uploaded room photo so Storage stays orphan-free
+        await deleteImageByUrl(room.photoUrl);
       } catch (err: any) {
         alert(err.message || 'Failed to delete room');
       }
@@ -177,6 +181,13 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
                 className="bg-white border border-[#e8e4dd] hover:border-[#e8e4dd] rounded-xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
               >
                 <div>
+                  {room.photoUrl && (
+                    <img
+                      src={room.photoUrl}
+                      alt={`Room ${room.roomNumber}`}
+                      className="w-full h-28 object-cover rounded-lg border border-[#e8e4dd] mb-3"
+                    />
+                  )}
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-mono font-bold bg-[#fafaf8] border border-[#e8e4dd] px-2.5 py-1 rounded-xl text-[#292827]">
                       Room {room.roomNumber}
@@ -366,6 +377,26 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
             <div className="text-xs text-[#73706d] space-y-1">
               <div className="font-semibold text-[#292827]">{hotel.name}</div>
               <div>Scan to open Room {selectedRoom.roomNumber} Guest Portal</div>
+            </div>
+
+            {/* Room photo — uploaded to hotels/{hotelId}/rooms/{roomId}/image.jpg */}
+            <div className="pt-2 border-t border-[#e8e4dd] text-left">
+              <ImageUploader
+                label="Room Photo (Optional)"
+                hint="Shown on the room card for front-desk reference."
+                storagePath={`hotels/${hotel.id}/rooms/${selectedRoom.id}`}
+                value={selectedRoom.photoUrl || ''}
+                onUrlChange={async (url) => {
+                  const photoUrl = url || '';
+                  try {
+                    await firestoreService.updateRoom(hotel.id, selectedRoom.id, { photoUrl } as any);
+                    setSelectedRoom({ ...selectedRoom, photoUrl });
+                  } catch (err: any) {
+                    alert(err.message || 'Failed to save room photo');
+                  }
+                }}
+                thumbClass="h-20"
+              />
             </div>
 
             <div className="flex items-center justify-center gap-2 pt-2">

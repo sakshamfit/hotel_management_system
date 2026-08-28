@@ -62,11 +62,17 @@ export const HotelAdminLayout: React.FC = () => {
         <div className="p-4 space-y-5">
           {/* Hotel identity — nested chrome in lifted indigo */}
           <div className="bg-primary-deep/60 border border-hairline-dark p-3 rounded-xl flex items-center gap-3">
-            <img
-              src={hotel.branding?.logoUrl || 'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=100'}
-              alt={hotel.name}
-              className="w-10 h-10 rounded-lg object-cover border border-hairline-dark"
-            />
+            {hotel.branding?.logoUrl ? (
+              <img
+                src={hotel.branding.logoUrl}
+                alt={hotel.name}
+                className="w-10 h-10 rounded-lg object-cover border border-hairline-dark bg-primary"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-lg bg-violet-soft text-primary flex items-center justify-center font-bold border border-hairline-dark">
+                {hotel.name.charAt(0)}
+              </div>
+            )}
             <div className="overflow-hidden">
               <h3 className="text-xs font-bold text-on-primary truncate leading-tight">{hotel.name}</h3>
               <div className="text-[10px] text-violet-soft font-mono font-semibold mt-0.5">{hotel.hotelCode}</div>

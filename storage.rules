@@ -1,0 +1,55 @@
+rules_version = '2';
+
+// Firebase Storage security rules for NEXORA HOTEL OS image uploads.
+//
+// Path layout (all images live under the owning hotel's tenant scope):
+//   hotels/{hotelId}/branding/logo.jpg | cover.jpg     — hotel logo & banner
+//   hotels/{hotelId}/menu/{itemId}/image.jpg            — dish photos
+//   hotels/{hotelId}/rooms/{roomId}/image.jpg           — room photos
+//   hotels/{hotelId}/profile/{userId}/image.jpg         — staff / profile photos
+//
+// Access model (mirrors firestore.rules):
+//   - hotel_admin: full image read/write/list/delete ONLY under their own
+//     hotels/{hotelId}/ scope (custom claim: { role: 'hotel_admin', hotelId })
+//   - super_admin: full access to every path
+//   - unauthenticated: no access — all rules require request.auth != null
+//
+// Uploads are constrained to images (JPEG / PNG / WebP) under 5MB.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'super_admin';
+    }
+
+    function isHotelAdmin(hotelId) {
+      return isAuthenticated() && (
+        request.auth.token.role == 'super_admin' ||
+        (request.auth.token.role == 'hotel_admin' && request.auth.token.hotelId == hotelId)
+      );
+    }
+
+    function isValidImageUpload() {
+      return request.resource.size > 0
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+
+    // Tenant-scoped image tree — the only path client uploads are allowed.
+    match /hotels/{hotelId}/{allPaths=**} {
+      allow read, list: if isHotelAdmin(hotelId);
+      allow create, update: if isHotelAdmin(hotelId) && isValidImageUpload();
+      allow delete: if isHotelAdmin(hotelId);
+    }
+
+    // Everything outside the tenant tree: super admin only.
+    match /{allPaths=**} {
+      allow read, write, list, delete: if isSuperAdmin();
+    }
+  }
+}

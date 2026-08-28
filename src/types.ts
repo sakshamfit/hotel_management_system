@@ -101,6 +101,7 @@ export interface Room {
   capacity?: number;
   status: RoomStatus;
   permanentToken: string; // Secure token used in QR /room/:permanentToken
+  photoUrl?: string; // Uploaded to hotels/{hotelId}/rooms/{roomId}/image.jpg (Firebase Storage)
   activeGuestSessionId?: string | null;
   guestName?: string;
   guestPhone?: string;

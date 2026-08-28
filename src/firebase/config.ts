@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 const firebaseConfig = {
@@ -23,3 +24,6 @@ export const db = getFirestore(
   app,
   firebaseConfigJson.firestoreDatabaseId || '(default)'
 );
+
+// Initialize Firebase Storage (image uploads: hotels/{hotelId}/...)
+export const storage = getStorage(app);

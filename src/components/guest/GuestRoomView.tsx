@@ -377,6 +377,13 @@ export const GuestRoomView: React.FC = () => {
                       className="bg-white border border-[#e8e4dd] rounded-xl p-4 shadow-xs flex flex-col justify-between"
                     >
                       <div>
+                        {item.imageUrl && (
+                          <img
+                            src={item.imageUrl}
+                            alt={item.name}
+                            className="w-full h-28 object-cover rounded-lg border border-[#e8e4dd] mb-3"
+                          />
+                        )}
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <div className="flex items-center gap-1.5">

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { firestoreService } from '../../services/firestoreService';
+import { uploadImage, extensionForFile, deleteImageByUrl } from '../../services/storageService';
+import { ImageUploader } from '../common/ImageUploader';
 import { Hotel, FoodItem } from '../../types';
 import {
   Utensils,
@@ -35,6 +37,11 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
   const [isVegetarian, setIsVegetarian] = useState(false);
   const [prepTime, setPrepTime] = useState('15');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Image State: imageUrl = already-uploaded Storage URL saved with the item;
+  // imageFile = pending file for NEW items (uploaded after the doc exists)
+  const [imageUrl, setImageUrl] = useState('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -83,6 +90,8 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
       setPrice((item.basePrice || (item as any).price || 0).toString());
       setIsVegetarian(item.isVegetarian || (item as any).isVeg || false);
       setPrepTime((item.preparationTimeMinutes || item.prepTimeMinutes || 15).toString());
+      setImageUrl(item.imageUrl || '');
+      setImageFile(null);
     } else {
       setEditingItem(null);
       setName('');
@@ -91,6 +100,8 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
       setPrice('18');
       setIsVegetarian(false);
       setPrepTime('15');
+      setImageUrl('');
+      setImageFile(null);
     }
     setIsEditModalOpen(true);
   };
@@ -114,9 +125,26 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
       };
 
       if (editingItem) {
-        await firestoreService.updateFoodItem(hotel.id, editingItem.id, payload as any);
+        // Existing item — uploader already pushed the file to
+        // hotels/{hotelId}/menu/{itemId}/image.jpg; persist the URL (or cleared value)
+        await firestoreService.updateFoodItem(hotel.id, editingItem.id, {
+          ...payload,
+          imageUrl,
+        } as any);
       } else {
-        await firestoreService.addFoodItem(hotel.id, payload as any);
+        // New item — create the doc first, then upload under its ID and save the URL back
+        const newItemId = await firestoreService.addFoodItem(hotel.id, payload as any);
+        if (imageFile) {
+          try {
+            const url = await uploadImage({
+              file: imageFile,
+              path: `hotels/${hotel.id}/menu/${newItemId}/image.${extensionForFile(imageFile)}`,
+            });
+            await firestoreService.updateFoodItem(hotel.id, newItemId, { imageUrl: url } as any);
+          } catch (uploadErr: any) {
+            console.warn('Menu image upload failed (item was still created):', uploadErr?.message);
+          }
+        }
       }
       setIsEditModalOpen(false);
     } catch (err: any) {
@@ -130,6 +158,8 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
     if (window.confirm(`Delete menu item "${item.name}"?`)) {
       try {
         await firestoreService.deleteFoodItem(hotel.id, item.id);
+        // Cleanup: remove the uploaded image so Storage stays orphan-free
+        await deleteImageByUrl(item.imageUrl);
       } catch (err: any) {
         alert(err.message || 'Failed to delete item');
       }
@@ -245,6 +275,13 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
                 className="bg-white border border-[#e8e4dd] hover:border-[#e8e4dd] rounded-xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
               >
                 <div>
+                  {item.imageUrl && (
+                    <img
+                      src={item.imageUrl}
+                      alt={item.name}
+                      className="w-full h-32 object-cover rounded-lg border border-[#e8e4dd] mb-3"
+                    />
+                  )}
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-1.5">
@@ -388,6 +425,17 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
                   className="w-full bg-white border border-[#e8e4dd] rounded-xl p-2.5 text-xs text-[#292827] focus:outline-none focus:border-[#292827]"
                 />
               </div>
+
+              {/* Dish photo — uploaded to hotels/{hotelId}/menu/{itemId}/image.jpg */}
+              <ImageUploader
+                label="Dish Photo (Optional)"
+                hint="Shown to guests on the in-room dining menu."
+                storagePath={editingItem ? `hotels/${hotel.id}/menu/${editingItem.id}` : undefined}
+                value={imageUrl}
+                onUrlChange={setImageUrl}
+                onFileChange={setImageFile}
+                thumbClass="h-20"
+              />
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

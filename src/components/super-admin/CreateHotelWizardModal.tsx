@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { firestoreService } from '../../services/firestoreService';
+import { uploadImage, extensionForFile, deleteFolder } from '../../services/storageService';
+import { ImageUploader } from '../common/ImageUploader';
 import {
   X,
   Building2,
@@ -45,9 +47,9 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
   const [currency, setCurrency] = useState('USD');
   const [timezone, setTimezone] = useState('America/New_York');
 
-  // Step 2: Branding & Appearance
-  const [logoUrl, setLogoUrl] = useState('');
-  const [coverImageUrl, setCoverImageUrl] = useState('');
+  // Step 2: Branding & Appearance (images upload to Storage after the hotel doc is created)
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
   const [primaryColor, setPrimaryColor] = useState('#1b1938');
   const [welcomeMessage, setWelcomeMessage] = useState('Welcome to our hotel. Explore amenities, place room service orders, and request assistance.');
 
@@ -163,8 +165,8 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         timezone,
         status: 'active',
         branding: {
-          logoUrl: logoUrl.trim(),
-          coverImageUrl: coverImageUrl.trim(),
+          logoUrl: '',
+          coverImageUrl: '',
           primaryColor,
           secondaryColor: '#292827',
           accentColor: primaryColor,
@@ -179,15 +181,57 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
         roomsCount: 0,
       });
 
+      // 1b. Upload branding images to Storage under hotels/{hotelId}/branding/
+      //     and save the download URLs back onto the hotel document.
+      let uploadedLogoUrl = '';
+      let uploadedCoverUrl = '';
+      try {
+        if (logoFile) {
+          uploadedLogoUrl = await uploadImage({
+            file: logoFile,
+            path: `hotels/${hotelId}/branding/logo.${extensionForFile(logoFile)}`,
+          });
+        }
+        if (coverFile) {
+          uploadedCoverUrl = await uploadImage({
+            file: coverFile,
+            path: `hotels/${hotelId}/branding/cover.${extensionForFile(coverFile)}`,
+          });
+        }
+        if (uploadedLogoUrl || uploadedCoverUrl) {
+          await firestoreService.updateHotelDoc(hotelId, {
+            branding: {
+              logoUrl: uploadedLogoUrl,
+              coverImageUrl: uploadedCoverUrl,
+              primaryColor,
+              secondaryColor: '#292827',
+              accentColor: primaryColor,
+              fontFamily: 'Inter, sans-serif',
+              welcomeMessage,
+            },
+          });
+        }
+      } catch (imgErr: any) {
+        // The hotel itself was created successfully — images are non-critical.
+        console.warn('Branding image upload failed (hotel was still created):', imgErr?.message);
+      }
+
       // 2. Create Firebase Auth user for hotel_admin using Admin SDK and set custom claims
-      await firestoreService.createHotelUserAuth(
-        hotelId,
-        hotelName.trim(),
-        adminEmail.trim(),
-        adminPassword.trim(),
-        adminName.trim(),
-        adminPhone.trim()
-      );
+      try {
+        await firestoreService.createHotelUserAuth(
+          hotelId,
+          hotelName.trim(),
+          adminEmail.trim(),
+          adminPassword.trim(),
+          adminName.trim(),
+          adminPhone.trim()
+        );
+      } catch (authErr: any) {
+        // Auth user creation failing must not orphan the hotel document
+        await firestoreService.deleteHotelDoc(hotelId).catch(() => undefined);
+        await deleteFolder(`hotels/${hotelId}`).catch(() => undefined);
+        throw authErr;
+      }
 
       try {
         confetti({
@@ -457,31 +501,19 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-[#292827] mb-1">
-                  Logo Image URL (Optional)
-                </label>
-                <input
-                  type="url"
-                  value={logoUrl}
-                  onChange={(e) => setLogoUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
-                />
-              </div>
+              <ImageUploader
+                label="Hotel Logo (Optional)"
+                hint="Square logo shown in the sidebar and guest portal header."
+                onFileChange={setLogoFile}
+                thumbClass="h-20"
+              />
 
-              <div>
-                <label className="block text-xs font-semibold text-[#292827] mb-1">
-                  Cover Banner Image URL (Optional)
-                </label>
-                <input
-                  type="url"
-                  value={coverImageUrl}
-                  onChange={(e) => setCoverImageUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
-                />
-              </div>
+              <ImageUploader
+                label="Cover Banner Image (Optional)"
+                hint="Wide banner photo of the property, shown on the hotel profile."
+                onFileChange={setCoverFile}
+                thumbClass="h-20"
+              />
 
               <div>
                 <label className="block text-xs font-semibold text-[#292827] mb-1">
