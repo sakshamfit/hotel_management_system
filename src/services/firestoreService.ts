@@ -10,8 +10,11 @@ import {
   query,
   where,
   orderBy,
+  limit,
   onSnapshot,
-  Timestamp,
+  runTransaction,
+  writeBatch,
+  serverTimestamp,
   Unsubscribe,
 } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
@@ -21,12 +24,44 @@ import { db, auth, firebaseConfig } from '../firebase/config';
 import {
   Hotel,
   Room,
+  RoomTypeDefinition,
+  Guest,
+  Booking,
+  BookingStatus,
+  CreateBookingInput,
+  RoomNight,
+  Folio,
+  Charge,
   FoodItem,
   HotelService,
   ServiceRequest,
-  GuestSession,
   DailyReportData,
 } from '../types';
+import { enumerateNights, isValidStay, roomNightId, nightsBetween } from '../utils/dates';
+
+export interface RoomAvailability {
+  room: Room;
+  available: boolean;
+  /** Set when `available` is false — the booking holding one of these nights. */
+  conflictBookingId?: string;
+  /** Nights in the requested window that are already taken. */
+  conflictDates?: string[];
+}
+
+/**
+ * Thrown when the stay cannot be booked. Carries a stable `code` so the UI can
+ * distinguish a genuine double-booking from a validation problem.
+ */
+export class BookingConflictError extends Error {
+  code: string;
+  conflictDates?: string[];
+  constructor(message: string, code = 'booking/conflict', conflictDates?: string[]) {
+    super(message);
+    this.name = 'BookingConflictError';
+    this.code = code;
+    this.conflictDates = conflictDates;
+  }
+}
 
 export const firestoreService = {
   // ==========================================
@@ -234,6 +269,36 @@ export const firestoreService = {
     );
   },
 
+  /**
+   * Single-room listener — used by the guest portal.
+   *
+   * Guests are scoped to ONE room (their own) by firestore.rules, so they must
+   * read by document id rather than listing the whole rooms collection
+   * (which also carries other guests' names and phone numbers).
+   */
+  subscribeRoom: (
+    hotelId: string,
+    roomId: string,
+    onUpdate: (room: Room | null) => void,
+    onError?: (err: Error) => void
+  ): Unsubscribe => {
+    const roomRef = doc(db, 'hotels', hotelId, 'rooms', roomId);
+    return onSnapshot(
+      roomRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          onUpdate({ id: docSnap.id, hotelId, ...docSnap.data() } as Room);
+        } else {
+          onUpdate(null);
+        }
+      },
+      (error) => {
+        console.error(`Error subscribing to room ${roomId} for hotel ${hotelId}:`, error);
+        if (onError) onError(error);
+      }
+    );
+  },
+
   addRoom: async (hotelId: string, roomData: Omit<Room, 'id' | 'hotelId'>): Promise<string> => {
     const roomsCol = collection(db, 'hotels', hotelId, 'rooms');
     const newDoc = await addDoc(roomsCol, {
@@ -375,6 +440,39 @@ export const firestoreService = {
     );
   },
 
+  /**
+   * Orders belonging to ONE guest, identified by the anonymous uid stamped onto
+   * the order at creation time (see GuestRoomView / the `orders` rules).
+   *
+   * Deliberately a single equality filter with no orderBy: a composite index
+   * would otherwise be required. Sorting newest-first happens client-side.
+   */
+  subscribeGuestOrders: (
+    hotelId: string,
+    guestUid: string,
+    onUpdate: (orders: ServiceRequest[]) => void,
+    onError?: (err: Error) => void
+  ): Unsubscribe => {
+    const col = collection(db, 'hotels', hotelId, 'orders');
+    const q = query(col, where('guestUid', '==', guestUid));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const orders: ServiceRequest[] = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          hotelId,
+          ...docSnap.data(),
+        })) as ServiceRequest[];
+        orders.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        onUpdate(orders);
+      },
+      (error) => {
+        console.error(`Error subscribing to guest orders for hotel ${hotelId}:`, error);
+        if (onError) onError(error);
+      }
+    );
+  },
+
   // Stream DOC CHANGES for a hotel's orders collection so callers can detect
   // genuinely NEW documents (snapshot.docChanges() with type === "added").
   // - The very first snapshot reports every existing doc as "added", so the
@@ -434,24 +532,118 @@ export const firestoreService = {
   },
 
   // ==========================================
-  // BOOKINGS / CHECK-INS (Subcollection: hotels/{hotelId}/bookings)
+  // ROOM TYPES (Subcollection: hotels/{hotelId}/roomTypes)
+  // ==========================================
+
+  subscribeRoomTypes: (
+    hotelId: string,
+    onUpdate: (types: RoomTypeDefinition[]) => void,
+    onError?: (err: Error) => void
+  ): Unsubscribe => {
+    const col = collection(db, 'hotels', hotelId, 'roomTypes');
+    const q = query(col, orderBy('name', 'asc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const types: RoomTypeDefinition[] = snapshot.docs.map((d) => ({
+          id: d.id,
+          hotelId,
+          ...d.data(),
+        })) as RoomTypeDefinition[];
+        onUpdate(types);
+      },
+      (error) => {
+        console.error(`Error subscribing to roomTypes for hotel ${hotelId}:`, error);
+        if (onError) onError(error);
+      }
+    );
+  },
+
+  addRoomType: async (
+    hotelId: string,
+    data: Omit<RoomTypeDefinition, 'id' | 'hotelId'>
+  ): Promise<string> => {
+    const col = collection(db, 'hotels', hotelId, 'roomTypes');
+    const newDoc = await addDoc(col, { ...data, createdAt: new Date().toISOString() });
+    return newDoc.id;
+  },
+
+  updateRoomType: async (
+    hotelId: string,
+    roomTypeId: string,
+    data: Partial<RoomTypeDefinition>
+  ): Promise<void> => {
+    await updateDoc(doc(db, 'hotels', hotelId, 'roomTypes', roomTypeId), data);
+  },
+
+  // ==========================================
+  // GUESTS (Subcollection: hotels/{hotelId}/guests)
+  // The booking contact — deliberately NOT the anonymous portal auth user.
+  // ==========================================
+
+  subscribeGuests: (
+    hotelId: string,
+    onUpdate: (guests: Guest[]) => void,
+    onError?: (err: Error) => void
+  ): Unsubscribe => {
+    const col = collection(db, 'hotels', hotelId, 'guests');
+    const q = query(col, orderBy('name', 'asc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const guests: Guest[] = snapshot.docs.map((d) => ({
+          id: d.id,
+          hotelId,
+          ...d.data(),
+        })) as Guest[];
+        onUpdate(guests);
+      },
+      (error) => {
+        console.error(`Error subscribing to guests for hotel ${hotelId}:`, error);
+        if (onError) onError(error);
+      }
+    );
+  },
+
+  createGuest: async (
+    hotelId: string,
+    data: Omit<Guest, 'id' | 'hotelId'>
+  ): Promise<string> => {
+    const col = collection(db, 'hotels', hotelId, 'guests');
+    const newDoc = await addDoc(col, {
+      ...data,
+      createdAt: serverTimestamp(),
+    });
+    return newDoc.id;
+  },
+
+  updateGuest: async (
+    hotelId: string,
+    guestId: string,
+    data: Partial<Guest>
+  ): Promise<void> => {
+    await updateDoc(doc(db, 'hotels', hotelId, 'guests', guestId), data);
+  },
+
+  // ==========================================
+  // BOOKINGS / RESERVATIONS (Subcollection: hotels/{hotelId}/bookings)
   // ==========================================
 
   subscribeBookings: (
     hotelId: string,
-    onUpdate: (bookings: GuestSession[]) => void,
+    onUpdate: (bookings: Booking[]) => void,
     onError?: (err: Error) => void
   ): Unsubscribe => {
     const col = collection(db, 'hotels', hotelId, 'bookings');
-    const q = query(col, orderBy('checkInTime', 'desc'));
+    const q = query(col, orderBy('checkInDate', 'desc'));
     return onSnapshot(
       q,
       (snapshot) => {
-        const bookings: GuestSession[] = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
+        const bookings: Booking[] = snapshot.docs.map((d) => ({
+          id: d.id,
           hotelId,
-          ...docSnap.data(),
-        })) as GuestSession[];
+          ...d.data(),
+        })) as Booking[];
         onUpdate(bookings);
       },
       (error) => {
@@ -461,41 +653,295 @@ export const firestoreService = {
     );
   },
 
+  /**
+   * Availability for a stay window.
+   *
+   * Reads every roomNight in [checkInDate, checkOutDate) with a single range
+   * query on the date-only field (ISO dates sort lexicographically, so no
+   * composite index is needed) and subtracts those rooms from inventory.
+   * Rooms under maintenance are never offered.
+   */
+  findAvailableRooms: async (
+    hotelId: string,
+    checkInDate: string,
+    checkOutDate: string
+  ): Promise<RoomAvailability[]> => {
+    const stay = isValidStay(checkInDate, checkOutDate);
+    if (!stay.ok) throw new BookingConflictError(stay.error, 'booking/invalid-stay');
+
+    const nightsQuery = query(
+      collection(db, 'hotels', hotelId, 'roomNights'),
+      where('date', '>=', checkInDate),
+      where('date', '<', checkOutDate)
+    );
+    const [nightSnap, roomSnap] = await Promise.all([
+      getDocs(nightsQuery),
+      getDocs(query(collection(db, 'hotels', hotelId, 'rooms'), orderBy('roomNumber', 'asc'))),
+    ]);
+
+    const taken = new Map<string, { bookingId: string; dates: string[] }>();
+    nightSnap.docs.forEach((d) => {
+      const night = d.data() as RoomNight;
+      if (!night?.roomId) return;
+      const entry = taken.get(night.roomId) || { bookingId: night.bookingId, dates: [] };
+      if (night.date) entry.dates.push(night.date);
+      taken.set(night.roomId, entry);
+    });
+
+    return roomSnap.docs
+      .map((d) => {
+        const room = { id: d.id, hotelId, ...d.data() } as Room;
+        const conflict = taken.get(room.id);
+        const outOfService = room.status === 'maintenance';
+        return {
+          room,
+          available: !conflict && !outOfService,
+          ...(conflict
+            ? { conflictBookingId: conflict.bookingId, conflictDates: conflict.dates.sort() }
+            : {}),
+        };
+      })
+      .filter((entry) => entry.room.status !== 'occupied' || entry.conflictBookingId);
+  },
+
+  /**
+   * Creates a booking, its room-night locks, and its folio — atomically.
+   *
+   * The roomNights read is the double-booking check: the existence of a
+   * `roomNights/{roomId}_{date}` document means that room is taken that night.
+   * All reads happen before any write (Firestore transaction requirement), and
+   * a conflict throws BookingConflictError so nothing at all is written.
+   */
   createBooking: async (
     hotelId: string,
-    bookingData: Omit<GuestSession, 'id' | 'hotelId'>
+    input: CreateBookingInput
   ): Promise<string> => {
-    const col = collection(db, 'hotels', hotelId, 'bookings');
-    const newDoc = await addDoc(col, {
-      ...bookingData,
-      status: 'active',
-      checkInTime: bookingData.checkInTime || new Date().toISOString(),
+    const { guestId, roomId, roomTypeId, checkInDate, checkOutDate, agreedRate, numGuests, source } =
+      input;
+
+    const stay = isValidStay(checkInDate, checkOutDate);
+    if (!stay.ok) throw new BookingConflictError(stay.error, 'booking/invalid-stay');
+
+    const nights = enumerateNights(checkInDate, checkOutDate);
+    if (nights.length === 0) {
+      throw new BookingConflictError('A booking must cover at least one night.', 'booking/invalid-stay');
+    }
+    if (agreedRate < 0 || !Number.isFinite(agreedRate)) {
+      throw new BookingConflictError('Agreed rate must be a positive number.', 'booking/invalid-rate');
+    }
+
+    const bookingRef = doc(collection(db, 'hotels', hotelId, 'bookings'));
+    const folioRef = doc(db, 'hotels', hotelId, 'folios', bookingRef.id);
+    const nightRefs = nights.map((date) => doc(db, 'hotels', hotelId, 'roomNights', roomNightId(roomId, date)));
+
+    await runTransaction(db, async (tx) => {
+      // 1. Reads first.
+      const nightSnaps = await Promise.all(nightRefs.map((ref) => tx.get(ref)));
+      const conflicts = nightSnaps
+        .map((snap, i) => (snap.exists() ? nights[i] : null))
+        .filter((d): d is string => d !== null);
+
+      if (conflicts.length > 0) {
+        const first = nightSnaps.find((s) => s.exists());
+        const holder = first?.data() as RoomNight | undefined;
+        throw new BookingConflictError(
+          `Room is already booked for ${conflicts.length} of the requested night(s)` +
+            ` (${conflicts.slice(0, 3).join(', ')}${conflicts.length > 3 ? '…' : ''}). Choose another room or dates.`,
+          'booking/room-not-available',
+          conflicts
+        );
+      }
+
+      // 2. Writes.
+      tx.set(bookingRef, {
+        guestId,
+        roomId,
+        roomTypeId,
+        checkInDate,
+        checkOutDate,
+        actualCheckInAt: null,
+        actualCheckOutAt: null,
+        status: 'RESERVED' as BookingStatus,
+        agreedRate,
+        numGuests,
+        source,
+        createdBy: auth.currentUser?.uid || 'unknown',
+        createdAt: serverTimestamp(),
+      });
+
+      nights.forEach((date, i) => {
+        tx.set(nightRefs[i], {
+          roomId,
+          date,
+          bookingId: bookingRef.id,
+        });
+      });
+
+      // One folio per booking, same document id — OPEN with a zero balance.
+      // Room-night charges are raised by night audit / checkout (not yet built).
+      tx.set(folioRef, {
+        bookingId: bookingRef.id,
+        status: 'OPEN',
+        balance: 0,
+      });
     });
 
-    // Also update room status to occupied
-    if (bookingData.roomId) {
-      await firestoreService.updateRoom(hotelId, bookingData.roomId, {
-        status: 'occupied',
-        activeGuestSessionId: newDoc.id,
-      });
-    }
-    return newDoc.id;
+    return bookingRef.id;
   },
 
-  checkOutGuest: async (hotelId: string, bookingId: string, roomId?: string): Promise<void> => {
+  /**
+   * Front-desk check-in. Operates on the BOOKING, not the room document: the
+   * stay data lives on the booking, and the room only carries its physical
+   * status.
+   */
+  checkInGuest: async (hotelId: string, bookingId: string, roomId: string): Promise<void> => {
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'hotels', hotelId, 'bookings', bookingId), {
+      status: 'CHECKED_IN' as BookingStatus,
+      actualCheckInAt: serverTimestamp(),
+      actualCheckOutAt: null,
+    });
+    batch.update(doc(db, 'hotels', hotelId, 'rooms', roomId), { status: 'occupied' });
+    await batch.commit();
+  },
+
+  /**
+   * Front-desk check-out. The room goes to `cleaning`, NOT `available` —
+   * housekeeping clears it from there (HousekeepingTab room-status board).
+   */
+  checkOutGuest: async (hotelId: string, bookingId: string, roomId: string): Promise<void> => {
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'hotels', hotelId, 'bookings', bookingId), {
+      status: 'CHECKED_OUT' as BookingStatus,
+      actualCheckOutAt: serverTimestamp(),
+    });
+    batch.update(doc(db, 'hotels', hotelId, 'rooms', roomId), { status: 'cleaning' });
+    await batch.commit();
+  },
+
+  /** Releases the room-night locks so the room can be resold. */
+  cancelBooking: async (hotelId: string, bookingId: string): Promise<void> => {
     const bookingRef = doc(db, 'hotels', hotelId, 'bookings', bookingId);
-    await updateDoc(bookingRef, {
-      status: 'completed',
-      actualCheckOutTime: new Date().toISOString(),
-    });
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(bookingRef);
+      if (!snap.exists()) throw new Error('Booking not found.');
+      const booking = { id: snap.id, ...snap.data() } as Booking;
+      if (booking.status === 'CANCELLED' || booking.status === 'CHECKED_OUT') return;
 
-    if (roomId) {
-      await firestoreService.updateRoom(hotelId, roomId, {
-        status: 'cleaning',
-        activeGuestSessionId: null,
+      for (const date of enumerateNights(booking.checkInDate, booking.checkOutDate)) {
+        tx.delete(doc(db, 'hotels', hotelId, 'roomNights', roomNightId(booking.roomId, date)));
+      }
+      tx.update(bookingRef, { status: 'CANCELLED' as BookingStatus });
+      if (booking.status === 'CHECKED_IN') {
+        tx.update(doc(db, 'hotels', hotelId, 'rooms', booking.roomId), { status: 'cleaning' });
+      }
+    });
+  },
+
+  markNoShow: async (hotelId: string, bookingId: string): Promise<void> => {
+    const bookingRef = doc(db, 'hotels', hotelId, 'bookings', bookingId);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(bookingRef);
+      if (!snap.exists()) throw new Error('Booking not found.');
+      const booking = { id: snap.id, ...snap.data() } as Booking;
+      if (booking.status !== 'RESERVED') return;
+      for (const date of enumerateNights(booking.checkInDate, booking.checkOutDate)) {
+        tx.delete(doc(db, 'hotels', hotelId, 'roomNights', roomNightId(booking.roomId, date)));
+      }
+      tx.update(bookingRef, { status: 'NO_SHOW' as BookingStatus });
+    });
+  },
+
+  // ==========================================
+  // FOLIOS (hotels/{hotelId}/folios/{bookingId})
+  // Staff-only: guests never read or write folios directly.
+  // ==========================================
+
+  subscribeFolio: (
+    hotelId: string,
+    bookingId: string,
+    onUpdate: (folio: Folio | null) => void,
+    onError?: (err: Error) => void
+  ): Unsubscribe => {
+    return onSnapshot(
+      doc(db, 'hotels', hotelId, 'folios', bookingId),
+      (snap) => {
+        if (snap.exists()) {
+          onUpdate({ id: snap.id, ...snap.data() } as Folio);
+        } else {
+          onUpdate(null);
+        }
+      },
+      (error) => {
+        console.error(`Error subscribing to folio for booking ${bookingId}:`, error);
+        if (onError) onError(error);
+      }
+    );
+  },
+
+  getFolio: async (hotelId: string, bookingId: string): Promise<Folio | null> => {
+    const snap = await getDoc(doc(db, 'hotels', hotelId, 'folios', bookingId));
+    return snap.exists() ? ({ id: snap.id, ...snap.data() } as Folio) : null;
+  },
+
+  subscribeCharges: (
+    hotelId: string,
+    bookingId: string,
+    onUpdate: (charges: Charge[]) => void,
+    onError?: (err: Error) => void
+  ): Unsubscribe => {
+    const q = query(
+      collection(db, 'hotels', hotelId, 'folios', bookingId, 'charges'),
+      orderBy('createdAt', 'desc')
+    );
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const charges: Charge[] = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Charge[];
+        onUpdate(charges);
+      },
+      (error) => {
+        console.error(`Error subscribing to charges for booking ${bookingId}:`, error);
+        if (onError) onError(error);
+      }
+    );
+  },
+
+  /**
+   * Links an order to its booking's folio as a charge.
+   *
+   * The guest has no Firestore access to folios (by design — see the rules),
+   * so the write is performed by the server with the Admin SDK. Failure here
+   * must never break the guest's order, so callers should treat the result as
+   * advisory.
+   */
+  linkOrderCharge: async (
+    orderId: string
+  ): Promise<{ linked: boolean; reason?: string }> => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return { linked: false, reason: 'no-session' };
+
+    try {
+      const idToken = await currentUser.getIdToken();
+      const response = await fetch(`/api/guest/orders/${encodeURIComponent(orderId)}/charge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}` },
       });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return { linked: false, reason: data?.code || `http-${response.status}` };
+      }
+      return { linked: !!data.linked, reason: data.reason };
+    } catch (err: any) {
+      return { linked: false, reason: err?.message || 'network-error' };
     }
   },
+
+  /** Nights in a stay — re-exported for UI use (stay total on the folio). */
+  nightsBetween,
 
   // Server API calls helper (with Super Admin ID token)
   // Free-tier fallback: uses the Firebase Admin SDK server endpoint,
@@ -549,19 +995,6 @@ export const firestoreService = {
       },
       body: JSON.stringify({ email }),
     });
-  },
-
-  bootstrapSuperAdmin: async (email?: string, password?: string) => {
-    const response = await fetch('/api/auth/bootstrap-super-admin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to setup super admin');
-    }
-    return data;
   },
 
   /**

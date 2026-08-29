@@ -19,6 +19,7 @@ import {
   X,
   Leaf,
   Layers,
+  AlertCircle,
 } from 'lucide-react';
 
 interface CartItem {
@@ -28,7 +29,7 @@ interface CartItem {
 }
 
 export const GuestRoomView: React.FC = () => {
-  const { hotel: authHotel, guestRoomToken, allHotels } = useAuth();
+  const { hotel: authHotel, guestRoomToken, allHotels, guestSession, guestSessionError, user } = useAuth();
 
   const [hotel, setHotel] = useState<Hotel | null>(authHotel);
   const [room, setRoom] = useState<Room | null>(null);
@@ -51,8 +52,73 @@ export const GuestRoomView: React.FC = () => {
   const [selectedService, setSelectedService] = useState<HotelService | null>(null);
   const [serviceNotes, setServiceNotes] = useState('');
 
-  // 1. Resolve Hotel and Room
+  /**
+   * 1. Resolve the hotel, the room, and this guest's orders.
+   *
+   * Two distinct paths:
+   *   A) Anonymous guest with a room-scoped session (real QR scan). Everything
+   *      is read through the tenant/room scope the server granted: one hotel
+   *      doc, one room doc, and only this guest's own orders.
+   *   B) A signed-in staff member previewing the portal from Rooms & QR. They
+   *      keep their own credentials, so they read with their existing
+   *      hotel_admin / super_admin privileges.
+   */
   useEffect(() => {
+    let cancelled = false;
+    const unsubs: Array<() => void> = [];
+
+    const subscribeCatalogue = (hotelId: string) => {
+      unsubs.push(firestoreService.subscribeFoodItems(hotelId, (items) => setFoodItems(items)));
+      unsubs.push(firestoreService.subscribeServices(hotelId, (srvs) => setServices(srvs)));
+    };
+
+    // Path A — anonymous, room-scoped guest session
+    if (guestSession) {
+      (async () => {
+        const hotelDoc = await firestoreService.getHotel(guestSession.hotelId).catch(() => null);
+        if (cancelled) return;
+        setHotel(hotelDoc);
+        if (!hotelDoc) {
+          setLoading(false);
+          return;
+        }
+
+        unsubs.push(
+          firestoreService.subscribeRoom(guestSession.hotelId, guestSession.roomId, (r) => setRoom(r))
+        );
+        unsubs.push(
+          firestoreService.subscribeGuestOrders(
+            guestSession.hotelId,
+            guestSession.uid,
+            (ords) => {
+              setGuestOrders(ords);
+              setLoading(false);
+            },
+            (err) => {
+              console.error('Failed to listen to guest orders:', err);
+              setLoading(false);
+            }
+          )
+        );
+        subscribeCatalogue(guestSession.hotelId);
+      })();
+
+      return () => {
+        cancelled = true;
+        unsubs.forEach((u) => u());
+      };
+    }
+
+    // A room token is present but the anonymous session has not resolved yet
+    // (or failed). Hold the loading state — do not flash "no hotel".
+    if (user?.role === 'guest' || (guestRoomToken && !user)) {
+      return () => {
+        cancelled = true;
+        unsubs.forEach((u) => u());
+      };
+    }
+
+    // Path B — staff preview
     let resolvedHotel = authHotel;
     if (!resolvedHotel && allHotels.length > 0) {
       resolvedHotel = allHotels[0];
@@ -61,39 +127,30 @@ export const GuestRoomView: React.FC = () => {
 
     if (resolvedHotel) {
       // Subscribe to rooms to find room matching token or default to first
-      const unsubRooms = firestoreService.subscribeRooms(resolvedHotel.id, (rooms) => {
-        if (rooms.length > 0) {
-          const matched = rooms.find((r) => r.permanentToken === guestRoomToken) || rooms[0];
-          setRoom(matched);
-        }
-      });
-
-      // Subscribe to food items
-      const unsubFood = firestoreService.subscribeFoodItems(resolvedHotel.id, (items) => {
-        setFoodItems(items);
-      });
-
-      // Subscribe to services
-      const unsubServices = firestoreService.subscribeServices(resolvedHotel.id, (srvs) => {
-        setServices(srvs);
-      });
-
-      // Subscribe to orders
-      const unsubOrders = firestoreService.subscribeOrders(resolvedHotel.id, (ords) => {
-        setGuestOrders(ords);
-        setLoading(false);
-      });
-
-      return () => {
-        unsubRooms();
-        unsubFood();
-        unsubServices();
-        unsubOrders();
-      };
+      unsubs.push(
+        firestoreService.subscribeRooms(resolvedHotel.id, (rooms) => {
+          if (rooms.length > 0) {
+            const matched = rooms.find((r) => r.permanentToken === guestRoomToken) || rooms[0];
+            setRoom(matched);
+          }
+        })
+      );
+      subscribeCatalogue(resolvedHotel.id);
+      unsubs.push(
+        firestoreService.subscribeOrders(resolvedHotel.id, (ords) => {
+          setGuestOrders(ords);
+          setLoading(false);
+        })
+      );
     } else {
       setLoading(false);
     }
-  }, [authHotel, allHotels, guestRoomToken]);
+
+    return () => {
+      cancelled = true;
+      unsubs.forEach((u) => u());
+    };
+  }, [authHotel, allHotels, guestRoomToken, guestSession, user?.role]);
 
   // Cart operations
   const addToCart = (item: FoodItem) => {
@@ -135,10 +192,16 @@ export const GuestRoomView: React.FC = () => {
 
     try {
       const roomNum = room?.roomNumber || '101';
-      const guestName = room?.guestName || 'In-Room Guest';
+      const guestName = guestSession?.guestName || 'In-Room Guest';
 
-      await firestoreService.addOrder(hotel.id, {
+      // NOTE: keep this payload to exactly the fields the `orders` create rule
+      // allows for guests, and never send `undefined` (the Firestore SDK
+      // rejects it) — omit optional fields instead.
+      const notes = specialInstructions.trim();
+      const foodOrderId = await firestoreService.addOrder(hotel.id, {
+        roomId: room?.id || guestSession?.roomId || '',
         roomNumber: roomNum,
+        guestUid: user?.id || guestSession?.uid || '',
         guestName,
         type: 'food',
         status: 'PENDING',
@@ -148,9 +211,21 @@ export const GuestRoomView: React.FC = () => {
           price: c.price,
         })),
         totalAmount: cartTotal,
-        instructions: specialInstructions.trim() || undefined,
+        ...(notes ? { instructions: notes } : {}),
         createdAt: new Date().toISOString(),
       });
+
+      // Folio linkage: if this room has an active CHECKED_IN booking, the
+      // server posts a FOOD charge to that booking's folio. Folios are
+      // staff-only, so the write happens via the Admin SDK. Purely additive —
+      // the guest's order is already placed and must never be blocked by it.
+      if (foodOrderId) {
+        void firestoreService
+          .linkOrderCharge(foodOrderId)
+          .then((r) => {
+            if (!r.linked) console.warn('[folio] charge not linked:', r.reason);
+          });
+      }
 
       setCart([]);
       setIsCartOpen(false);
@@ -172,10 +247,12 @@ export const GuestRoomView: React.FC = () => {
 
     try {
       const roomNum = room?.roomNumber || '101';
-      const guestName = room?.guestName || 'In-Room Guest';
+      const guestName = guestSession?.guestName || 'In-Room Guest';
 
-      await firestoreService.addOrder(hotel.id, {
+      const serviceOrderId = await firestoreService.addOrder(hotel.id, {
+        roomId: room?.id || guestSession?.roomId || '',
         roomNumber: roomNum,
+        guestUid: user?.id || guestSession?.uid || '',
         guestName,
         type: 'service',
         status: 'PENDING',
@@ -187,9 +264,19 @@ export const GuestRoomView: React.FC = () => {
           },
         ],
         totalAmount: selectedService.price || 0,
-        instructions: serviceNotes.trim() || undefined,
+        ...(serviceNotes.trim() ? { instructions: serviceNotes.trim() } : {}),
         createdAt: new Date().toISOString(),
       });
+
+      // Folio linkage — SERVICE charge on the active booking's folio (see the
+      // dining order above for why this is server-side and best-effort).
+      if (serviceOrderId) {
+        void firestoreService
+          .linkOrderCharge(serviceOrderId)
+          .then((r) => {
+            if (!r.linked) console.warn('[folio] charge not linked:', r.reason);
+          });
+      }
 
       setSelectedService(null);
       setServiceNotes('');
@@ -202,6 +289,21 @@ export const GuestRoomView: React.FC = () => {
       setIsSubmittingOrder(false);
     }
   };
+
+  if (guestSessionError) {
+    return (
+      <div className="min-h-screen bg-[#fafaf8] flex items-center justify-center p-6">
+        <div className="bg-white border border-[#e8e4dd] p-8 rounded-xl max-w-sm text-center space-y-3 shadow-xs">
+          <AlertCircle className="w-10 h-10 text-[#b45309] mx-auto" />
+          <h3 className="text-base font-bold text-[#292827]">This room link can’t be opened</h3>
+          <p className="text-xs text-[#73706d]">{guestSessionError}</p>
+          <p className="text-[11px] text-[#9a9794]">
+            Ask the front desk to re-issue the QR code for this room.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -259,7 +361,7 @@ export const GuestRoomView: React.FC = () => {
                 </span>
               </div>
               <p className="t-caption text-on-dark-mute" style={{ fontSize: 12 }}>
-                Welcome{room?.guestName ? `, ${room.guestName}` : ''} • Tap items to order to your room
+                Welcome{guestSession?.guestName ? `, ${guestSession.guestName}` : ''} • Tap items to order to your room
               </p>
             </div>
           </div>
