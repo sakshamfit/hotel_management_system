@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { firestoreService } from '../../services/firestoreService';
-import { Hotel, Room } from '../../types';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { firestoreService, BookingConflictError, RoomAvailability } from '../../services/firestoreService';
+import { Hotel, Room, RoomTypeDefinition, Guest, Booking, BookingSource, Folio } from '../../types';
+import { addDays, todayDateOnly, nightsBetween, isValidDateOnly } from '../../utils/dates';
 import {
   UserCheck,
   UserPlus,
@@ -11,93 +12,332 @@ import {
   Phone,
   Mail,
   X,
+  AlertCircle,
+  CalendarPlus,
+  Search,
+  CreditCard,
+  Ban,
 } from 'lucide-react';
 
 interface Props {
   hotel: Hotel;
 }
 
+/** A booking joined with the guest + room it points at (never stored). */
+interface EnrichedBooking extends Booking {
+  resolvedGuestName: string;
+  resolvedGuestPhone: string;
+  resolvedRoomNumber: string;
+  resolvedRoomTypeName: string;
+}
+
+const SOURCES: BookingSource[] = ['walk-in', 'phone', 'ota'];
+
 export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [roomTypes, setRoomTypes] = useState<RoomTypeDefinition[]>([]);
+  const [guests, setGuests] = useState<Guest[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isCheckinModalOpen, setIsCheckinModalOpen] = useState(false);
+
+  // ---- New booking modal state ----
+  const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
+  const [checkInDate, setCheckInDate] = useState(() => todayDateOnly(hotel.timezone));
+  const [checkOutDate, setCheckOutDate] = useState(() => addDays(todayDateOnly(hotel.timezone), 1));
+  const [availability, setAvailability] = useState<RoomAvailability[] | null>(null);
+  const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [selectedRoomId, setSelectedRoomId] = useState('');
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
-  const [checkoutDate, setCheckoutDate] = useState('');
+  const [idProofType, setIdProofType] = useState('');
+  const [idProofNumber, setIdProofNumber] = useState('');
+  const [numGuests, setNumGuests] = useState('1');
+  const [source, setSource] = useState<BookingSource>('walk-in');
+  const [agreedRate, setAgreedRate] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // ---- Check-out dialog state ----
+  const [checkoutTarget, setCheckoutTarget] = useState<EnrichedBooking | null>(null);
+  const [checkoutFolio, setCheckoutFolio] = useState<Folio | null>(null);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+
+  // ---- List filter ----
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     setLoading(true);
-    const unsubscribe = firestoreService.subscribeRooms(
-      hotel.id,
-      (fetchedRooms) => {
-        setRooms(fetchedRooms);
+    const unsubs = [
+      firestoreService.subscribeRooms(hotel.id, setRooms, (err) => console.error('rooms', err)),
+      firestoreService.subscribeRoomTypes(hotel.id, setRoomTypes, (err) => console.error('roomTypes', err)),
+      firestoreService.subscribeGuests(hotel.id, setGuests, (err) => console.error('guests', err)),
+      firestoreService.subscribeBookings(hotel.id, (b) => {
+        setBookings(b);
         setLoading(false);
-      },
-      (err) => {
-        console.error('Failed to load rooms for check-in', err);
+      }, (err) => {
+        console.error('bookings', err);
         setLoading(false);
-      }
-    );
-    return () => unsubscribe();
+      }),
+    ];
+    return () => unsubs.forEach((u) => u());
   }, [hotel.id]);
 
-  const handleCheckIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedRoomId || !guestName) {
-      alert('Please select a room and enter guest name');
+  const guestById = useMemo(() => {
+    const map = new Map<string, Guest>();
+    guests.forEach((g) => map.set(g.id, g));
+    return map;
+  }, [guests]);
+
+  const roomById = useMemo(() => {
+    const map = new Map<string, Room>();
+    rooms.forEach((r) => map.set(r.id, r));
+    return map;
+  }, [rooms]);
+
+  const roomTypeById = useMemo(() => {
+    const map = new Map<string, RoomTypeDefinition>();
+    roomTypes.forEach((t) => map.set(t.id, t));
+    return map;
+  }, [roomTypes]);
+
+  const enrich = useCallback(
+    (booking: Booking): EnrichedBooking => ({
+      ...booking,
+      resolvedGuestName: guestById.get(booking.guestId)?.name || 'Guest',
+      resolvedGuestPhone: guestById.get(booking.guestId)?.phone || '',
+      resolvedRoomNumber: roomById.get(booking.roomId)?.roomNumber || '—',
+      resolvedRoomTypeName: roomTypeById.get(booking.roomTypeId)?.name || '—',
+    }),
+    [guestById, roomById, roomTypeById]
+  );
+
+  const today = todayDateOnly(hotel.timezone);
+
+  const { dueIn, inHouse, upcoming, recent } = useMemo(() => {
+    const enriched = bookings.map(enrich);
+    const matches = (b: EnrichedBooking) => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.trim().toLowerCase();
+      return (
+        b.resolvedGuestName.toLowerCase().includes(q) ||
+        b.resolvedRoomNumber.toLowerCase().includes(q) ||
+        (b.resolvedGuestPhone || '').includes(q)
+      );
+    };
+    return {
+      // Reserved and due to arrive today or already past due
+      dueIn: enriched.filter((b) => b.status === 'RESERVED' && b.checkInDate <= today && matches(b)),
+      inHouse: enriched.filter((b) => b.status === 'CHECKED_IN' && matches(b)),
+      upcoming: enriched.filter((b) => b.status === 'RESERVED' && b.checkInDate > today && matches(b)),
+      recent: enriched.filter((b) => b.status === 'CHECKED_OUT' && matches(b)).slice(0, 6),
+    };
+  }, [bookings, enrich, searchQuery, today]);
+
+  // ---- Availability lookup whenever the stay window changes ----
+  useEffect(() => {
+    if (!isBookingModalOpen) return;
+    if (!isValidDateOnly(checkInDate) || !isValidDateOnly(checkOutDate)) {
+      setAvailability(null);
       return;
     }
+    let cancelled = false;
+    setCheckingAvailability(true);
+    firestoreService
+      .findAvailableRooms(hotel.id, checkInDate, checkOutDate)
+      .then((result) => {
+        if (cancelled) return;
+        setAvailability(result);
+        setCheckingAvailability(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('Availability lookup failed:', err);
+        setAvailability([]);
+        setCheckingAvailability(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hotel.id, checkInDate, checkOutDate, isBookingModalOpen]);
+
+  const availableRooms = availability?.filter((a) => a.available) || [];
+  const selectedRoomType = selectedRoomId
+    ? roomTypeById.get(roomById.get(selectedRoomId)?.roomTypeId || '')
+    : undefined;
+
+  const openBookingModal = () => {
+    setError(null);
+    setGuestName('');
+    setGuestPhone('');
+    setGuestEmail('');
+    setIdProofType('');
+    setIdProofNumber('');
+    setNumGuests('1');
+    setSource('walk-in');
+    setSelectedRoomId('');
+    setAgreedRate('');
+    setCheckInDate(today);
+    setCheckOutDate(addDays(today, 1));
+    setIsBookingModalOpen(true);
+  };
+
+  const handleSelectRoom = (roomId: string) => {
+    setSelectedRoomId(roomId);
+    const type = roomTypeById.get(roomById.get(roomId)?.roomTypeId || '');
+    setAgreedRate(type ? String(type.baseRate) : '');
+  };
+
+  const handleCreateBooking = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!selectedRoomId) return setError('Select an available room.');
+    if (!guestName.trim()) return setError('Guest name is required.');
+    if (!guestPhone.trim()) return setError('Guest phone is required.');
+
+    const rate = parseFloat(agreedRate);
+    if (!Number.isFinite(rate) || rate < 0) return setError('Enter a valid nightly rate.');
 
     setIsSubmitting(true);
     try {
-      await firestoreService.updateRoom(hotel.id, selectedRoomId, {
-        status: 'occupied',
-        guestName: guestName.trim(),
-        guestPhone: guestPhone.trim(),
-        guestEmail: guestEmail.trim(),
-        checkedInAt: new Date().toISOString(),
-        expectedCheckout: checkoutDate || '',
+      // The booking stores guestId only — guest PII lives in one place.
+      const guestId = await firestoreService.createGuest(hotel.id, {
+        name: guestName.trim(),
+        phone: guestPhone.trim(),
+        email: guestEmail.trim() || undefined,
+        idProofType: idProofType.trim() || undefined,
+        idProofNumber: idProofNumber.trim() || undefined,
       });
 
-      setIsCheckinModalOpen(false);
-      setGuestName('');
-      setGuestPhone('');
-      setGuestEmail('');
-      setSelectedRoomId('');
+      await firestoreService.createBooking(hotel.id, {
+        guestId,
+        roomId: selectedRoomId,
+        roomTypeId: roomById.get(selectedRoomId)?.roomTypeId || '',
+        checkInDate,
+        checkOutDate,
+        agreedRate: rate,
+        numGuests: parseInt(numGuests, 10) || 1,
+        source,
+      });
+
+      setIsBookingModalOpen(false);
     } catch (err: any) {
-      alert(`Error checking in guest: ${err.message}`);
+      if (err instanceof BookingConflictError) {
+        setError(err.message);
+      } else {
+        setError(err?.message || 'Could not create the booking.');
+      }
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleCheckOut = async (room: Room) => {
-    if (
-      !window.confirm(
-        `Confirm check-out for ${room.guestName || 'Guest'} in Room ${room.roomNumber}? This will release the room as available.`
-      )
-    ) {
-      return;
-    }
-
+  const handleCheckIn = async (booking: EnrichedBooking) => {
     try {
-      await firestoreService.updateRoom(hotel.id, room.id, {
-        status: 'available',
-        guestName: '',
-        guestPhone: '',
-        guestEmail: '',
-        lastCheckedOutAt: new Date().toISOString(),
-      });
+      await firestoreService.checkInGuest(hotel.id, booking.id, booking.roomId);
     } catch (err: any) {
-      alert(`Error during checkout: ${err.message}`);
+      alert(`Error checking in: ${err.message}`);
     }
   };
 
-  const vacantRooms = rooms.filter((r) => r.status === 'available' || r.status === 'vacant' || r.status === 'VACANT');
-  const occupiedRooms = rooms.filter((r) => r.status === 'occupied' || r.status === 'OCCUPIED');
+  const openCheckoutDialog = async (booking: EnrichedBooking) => {
+    setCheckoutTarget(booking);
+    setCheckoutFolio(null);
+    try {
+      const folio = await firestoreService.getFolio(hotel.id, booking.id);
+      setCheckoutFolio(folio);
+    } catch (err) {
+      console.warn('Could not load folio for checkout:', err);
+    }
+  };
+
+  const confirmCheckOut = async () => {
+    if (!checkoutTarget) return;
+    setIsCheckingOut(true);
+    try {
+      await firestoreService.checkOutGuest(hotel.id, checkoutTarget.id, checkoutTarget.roomId);
+      setCheckoutTarget(null);
+      setCheckoutFolio(null);
+    } catch (err: any) {
+      alert(`Error during checkout: ${err.message}`);
+    } finally {
+      setIsCheckingOut(false);
+    }
+  };
+
+  const handleCancelBooking = async (booking: EnrichedBooking) => {
+    if (!window.confirm(`Cancel the reservation for ${booking.resolvedGuestName}? The nights will be released.`)) {
+      return;
+    }
+    try {
+      await firestoreService.cancelBooking(hotel.id, booking.id);
+    } catch (err: any) {
+      alert(`Error cancelling booking: ${err.message}`);
+    }
+  };
+
+  const handleNoShow = async (booking: EnrichedBooking) => {
+    if (!window.confirm(`Mark ${booking.resolvedGuestName} as a no-show? The nights will be released.`)) return;
+    try {
+      await firestoreService.markNoShow(hotel.id, booking.id);
+    } catch (err: any) {
+      alert(`Error marking no-show: ${err.message}`);
+    }
+  };
+
+  const nightCount =
+    isValidDateOnly(checkInDate) && isValidDateOnly(checkOutDate) ? nightsBetween(checkInDate, checkOutDate) : 0;
+
+  const BookingCard: React.FC<{
+    booking: EnrichedBooking;
+    action?: React.ReactNode;
+  }> = ({ booking, action }) => (
+    <div className="bg-white border border-[#e8e4dd] rounded-xl p-5 shadow-xs flex flex-col justify-between">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-mono font-bold bg-[#fafaf8] border border-[#e8e4dd] px-2.5 py-1 rounded-xl text-[#292827]">
+            Room {booking.resolvedRoomNumber}
+          </span>
+          <span className="text-[10px] font-mono font-bold uppercase bg-[#ece6fb] text-[#0e0c1f] border border-[#c9b4fa] px-2.5 py-0.5 rounded-full">
+            {booking.status.replace('_', ' ')}
+          </span>
+        </div>
+
+        <div>
+          <h4 className="font-bold text-sm text-[#292827]">{booking.resolvedGuestName}</h4>
+          <p className="text-xs text-[#73706d]">
+            {booking.resolvedRoomTypeName} • {booking.numGuests} guest{booking.numGuests === 1 ? '' : 's'} •{' '}
+            {booking.source}
+          </p>
+        </div>
+
+        <div className="space-y-1 text-xs text-[#73706d] bg-[#fafaf8] p-3 rounded-lg border border-[#e8e4dd]">
+          {booking.resolvedGuestPhone && (
+            <div className="flex items-center gap-1.5">
+              <Phone className="w-3.5 h-3.5 text-[#1b1938]" />
+              <span>{booking.resolvedGuestPhone}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 text-[11px]">
+            <Calendar className="w-3.5 h-3.5" />
+            <span>
+              In: {booking.checkInDate} • Out: {booking.checkOutDate} ({nightsBetween(booking.checkInDate, booking.checkOutDate)}N)
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px]">
+            <CreditCard className="w-3.5 h-3.5" />
+            <span>
+              {hotel.currencySymbol || '$'}
+              {booking.agreedRate}/night
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {action && <div className="mt-4 pt-3 border-t border-[#e8e4dd]">{action}</div>}
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -108,188 +348,250 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
             <UserCheck className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-[#292827]">Guest Front Desk & Check-In Desk</h2>
+            <h2 className="text-base font-bold text-[#292827]">Front Desk & Reservations</h2>
             <p className="text-xs text-[#73706d]">
-              Manage guest check-ins, active in-room occupancies, and instant check-outs.
+              Reservations, arrivals, in-house guests and check-outs — stay data lives on the booking.
             </p>
           </div>
         </div>
 
         <button
-          onClick={() => setIsCheckinModalOpen(true)}
-          disabled={vacantRooms.length === 0}
-          className="flex items-center gap-2 px-5 py-2.5 bg-[#1b1938] hover:bg-[#0e0c1f] disabled:opacity-50 text-white rounded-lg text-xs font-bold shadow-sm transition-all"
+          onClick={openBookingModal}
+          className="flex items-center gap-2 px-5 py-2.5 bg-[#1b1938] hover:bg-[#0e0c1f] text-white rounded-lg text-xs font-bold shadow-sm transition-all"
         >
-          <UserPlus className="w-4 h-4" /> Check-In New Guest
+          <CalendarPlus className="w-4 h-4" /> New Reservation
         </button>
       </div>
 
       {/* Stats Summary */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-        <div className="bg-white border border-[#e8e4dd] p-5 rounded-xl shadow-xs">
-          <span className="text-xs text-[#73706d] font-medium">Currently Occupied</span>
-          <div className="text-2xl font-bold text-[#1b1938] mt-1 font-mono">{occupiedRooms.length}</div>
-          <div className="text-[11px] text-[#73706d] mt-1">Active guests in property</div>
-        </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <StatCard label="In House" value={inHouse.length} hint="Checked-in guests" />
+        <StatCard label="Due Today" value={dueIn.length} hint="Arrivals not yet checked in" />
+        <StatCard label="Future Reservations" value={upcoming.length} hint="Confirmed, arriving later" />
+        <StatCard label="Total Inventory" value={rooms.length} hint={`${roomTypes.length} room type(s)`} />
+      </div>
 
-        <div className="bg-white border border-[#e8e4dd] p-5 rounded-xl shadow-xs">
-          <span className="text-xs text-[#73706d] font-medium">Available Vacant Rooms</span>
-          <div className="text-2xl font-bold text-[#155555] mt-1 font-mono">{vacantRooms.length}</div>
-          <div className="text-[11px] text-[#73706d] mt-1">Ready for check-in</div>
-        </div>
-
-        <div className="bg-white border border-[#e8e4dd] p-5 rounded-xl shadow-xs col-span-2 sm:col-span-1">
-          <span className="text-xs text-[#73706d] font-medium">Total Inventory</span>
-          <div className="text-2xl font-bold text-[#292827] mt-1 font-mono">{rooms.length}</div>
-          <div className="text-[11px] text-[#73706d] mt-1">Configured hotel rooms</div>
+      {/* Search */}
+      <div className="flex items-center justify-between bg-white p-3.5 rounded-lg border border-[#e8e4dd]">
+        <div className="relative w-full sm:w-80">
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#73706d]" />
+          <input
+            type="text"
+            placeholder="Search by guest, room or phone..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-[#fafaf8] border border-[#e8e4dd] rounded-xl pl-9 pr-3.5 py-2 text-xs text-[#292827] focus:outline-none focus:border-[#292827]"
+          />
         </div>
       </div>
 
-      {/* Main Content */}
       {loading ? (
         <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center">
           <div className="w-8 h-8 border-2 border-[#1b1938] border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-xs text-[#73706d] mt-3">Loading front desk data...</p>
         </div>
-      ) : rooms.length === 0 ? (
-        <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center space-y-3 shadow-xs">
-          <div className="w-16 h-16 rounded-full bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] flex items-center justify-center mx-auto">
-            <BedDouble className="w-8 h-8" />
-          </div>
-          <div className="space-y-1 max-w-sm mx-auto">
-            <h3 className="text-base font-bold text-[#292827]">No Rooms Configured</h3>
-            <p className="text-xs text-[#73706d]">
-              Please add rooms under the "Rooms & Permanent QR" tab before checking in guests.
-            </p>
-          </div>
-        </div>
       ) : (
-        <div className="space-y-4">
-          <h3 className="font-bold text-sm text-[#292827]">Currently Checked-In Guests ({occupiedRooms.length})</h3>
-
-          {occupiedRooms.length === 0 ? (
-            <div className="bg-white border border-[#e8e4dd] rounded-xl p-8 text-center text-xs text-[#73706d]">
-              No rooms are currently occupied. Click "Check-In New Guest" above to assign an arriving guest.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {occupiedRooms.map((room) => (
-                <div
-                  key={room.id}
-                  className="bg-white border border-[#e8e4dd] hover:border-[#e8e4dd] rounded-xl p-5 shadow-xs flex flex-col justify-between"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono font-bold bg-[#fafaf8] border border-[#e8e4dd] px-2.5 py-1 rounded-xl text-[#292827]">
-                        Room {room.roomNumber}
-                      </span>
-                      <span className="text-[10px] font-mono font-bold uppercase bg-[#ece6fb] text-[#0e0c1f] border border-[#c9b4fa] px-2.5 py-0.5 rounded-full">
-                        Occupied
-                      </span>
-                    </div>
-
-                    <div>
-                      <h4 className="font-bold text-sm text-[#292827]">{room.guestName}</h4>
-                      <p className="text-xs text-[#73706d]">{room.type || 'Standard Room'}</p>
-                    </div>
-
-                    <div className="space-y-1 text-xs text-[#73706d] bg-[#fafaf8] p-3 rounded-lg border border-[#e8e4dd]">
-                      {room.guestPhone && (
-                        <div className="flex items-center gap-1.5">
-                          <Phone className="w-3.5 h-3.5 text-[#1b1938]" />
-                          <span>{room.guestPhone}</span>
-                        </div>
-                      )}
-                      {room.guestEmail && (
-                        <div className="flex items-center gap-1.5">
-                          <Mail className="w-3.5 h-3.5 text-[#1b1938]" />
-                          <span className="truncate">{room.guestEmail}</span>
-                        </div>
-                      )}
-                      {room.checkedInAt && (
-                        <div className="flex items-center gap-1.5 text-[11px] text-[#73706d]">
-                          <Calendar className="w-3.5 h-3.5" />
-                          <span>In: {new Date(room.checkedInAt).toLocaleDateString()}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 pt-3 border-t border-[#e8e4dd]">
+        <div className="space-y-6">
+          <Section
+            title={`Due to Arrive (${dueIn.length})`}
+            empty="No arrivals due. Reservations with a check-in date of today or earlier appear here."
+            icon={<UserCheck className="w-4 h-4" />}
+          >
+            {dueIn.map((b) => (
+              <BookingCard
+                key={b.id}
+                booking={b}
+                action={
+                  <div className="flex gap-2">
                     <button
-                      onClick={() => handleCheckOut(room)}
-                      className="w-full py-2.5 px-3 rounded-full bg-white hover:bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
+                      onClick={() => handleCheckIn(b)}
+                      className="flex-1 py-2.5 px-3 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-sm transition-colors"
                     >
-                      <LogOut className="w-3.5 h-3.5" /> Check Out Guest
+                      Check In
+                    </button>
+                    <button
+                      onClick={() => handleNoShow(b)}
+                      title="Mark as no-show"
+                      className="p-2.5 rounded-lg border border-[#e8e4dd] hover:border-[#c9b4fa] text-[#73706d] hover:text-[#1b1938]"
+                    >
+                      <Ban className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                </div>
+                }
+              />
+            ))}
+          </Section>
+
+          <Section
+            title={`In House (${inHouse.length})`}
+            empty="No guests are currently checked in."
+            icon={<BedDouble className="w-4 h-4" />}
+          >
+            {inHouse.map((b) => (
+              <BookingCard
+                key={b.id}
+                booking={b}
+                action={
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openCheckoutDialog(b)}
+                      className="flex-1 py-2.5 px-3 rounded-full bg-white hover:bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <LogOut className="w-3.5 h-3.5" /> Check Out
+                    </button>
+                  </div>
+                }
+              />
+            ))}
+          </Section>
+
+          <Section
+            title={`Upcoming Reservations (${upcoming.length})`}
+            empty="No future reservations."
+            icon={<Calendar className="w-4 h-4" />}
+          >
+            {upcoming.map((b) => (
+              <BookingCard
+                key={b.id}
+                booking={b}
+                action={
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleCheckIn(b)}
+                      className="flex-1 py-2.5 px-3 rounded-lg bg-white border border-[#e8e4dd] hover:border-[#c9b4fa] text-[#292827] text-xs font-bold transition-colors"
+                    >
+                      Early Check In
+                    </button>
+                    <button
+                      onClick={() => handleCancelBooking(b)}
+                      className="px-4 py-2.5 rounded-lg border border-[#e8e4dd] hover:border-[#c9b4fa] text-[#73706d] hover:text-[#1b1938] text-xs font-bold transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                }
+              />
+            ))}
+          </Section>
+
+          {recent.length > 0 && (
+            <Section title="Recently Checked Out" empty="" icon={<CheckCircle2 className="w-4 h-4" />}>
+              {recent.map((b) => (
+                <BookingCard key={b.id} booking={b} />
               ))}
-            </div>
+            </Section>
           )}
         </div>
       )}
 
-      {/* Check-In Modal */}
-      {isCheckinModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-[#e8e4dd]">
+      {/* ===== New Reservation Modal ===== */}
+      {isBookingModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-xl w-full max-w-lg p-6 space-y-4 shadow-2xl border border-[#e8e4dd] my-8">
             <div className="flex items-center justify-between border-b border-[#e8e4dd] pb-3">
-              <h3 className="text-base font-bold text-[#292827]">Check-In Arriving Guest</h3>
+              <h3 className="text-base font-bold text-[#292827]">New Reservation</h3>
               <button
-                onClick={() => setIsCheckinModalOpen(false)}
+                onClick={() => setIsBookingModalOpen(false)}
                 className="p-1 rounded-full hover:bg-[#fafaf8] text-[#73706d]"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCheckIn} className="space-y-3.5">
+            <form onSubmit={handleCreateBooking} className="space-y-3.5">
+              {/* Stay window */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">Check-in *</label>
+                  <input
+                    type="date"
+                    required
+                    value={checkInDate}
+                    min={today}
+                    onChange={(e) => setCheckInDate(e.target.value)}
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">Check-out *</label>
+                  <input
+                    type="date"
+                    required
+                    value={checkOutDate}
+                    min={addDays(checkInDate, 1)}
+                    onChange={(e) => setCheckOutDate(e.target.value)}
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-[#73706d] -mt-1">
+                {nightCount > 0
+                  ? `${nightCount} night${nightCount === 1 ? '' : 's'} — the check-out day is not charged as a night.`
+                  : 'Check-out must be at least one night after check-in.'}
+              </p>
+
+              {/* Room */}
               <div>
                 <label className="block text-xs font-semibold text-[#292827] mb-1">
-                  Select Room <span className="text-[#1b1938]">*</span>
+                  Room * {checkingAvailability && <span className="text-[#73706d] font-normal">(checking…)</span>}
                 </label>
                 <select
                   required
                   value={selectedRoomId}
-                  onChange={(e) => setSelectedRoomId(e.target.value)}
-                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
+                  onChange={(e) => handleSelectRoom(e.target.value)}
+                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
                 >
                   <option value="">-- Choose Available Room --</option>
-                  {vacantRooms.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      Room {r.roomNumber} ({r.type || 'Standard'}, Floor {r.floor || 1})
-                    </option>
-                  ))}
+                  {availableRooms.map((a) => {
+                    const type = roomTypeById.get(a.room.roomTypeId);
+                    return (
+                      <option key={a.room.id} value={a.room.id}>
+                        Room {a.room.roomNumber}
+                        {type ? ` — ${type.name} (${hotel.currencySymbol || '$'}${type.baseRate}/nt)` : ''}
+                        {a.room.status === 'cleaning' ? ' — needs cleaning' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
+                {availability && availableRooms.length === 0 && (
+                  <p className="text-[11px] text-[#b45309] mt-1.5">
+                    No rooms free for these dates ({availability.length} room(s) checked).
+                  </p>
+                )}
+                {availability && availableRooms.length > 0 && (
+                  <p className="text-[11px] text-[#155555] mt-1.5">
+                    {availableRooms.length} of {availability.length} room(s) available.
+                  </p>
+                )}
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-[#292827] mb-1">
-                  Guest Full Name <span className="text-[#1b1938]">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={guestName}
-                  onChange={(e) => setGuestName(e.target.value)}
-                  placeholder="e.g. John Doe"
-                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
-                />
+              {/* Guest */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">Guest Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={guestName}
+                    onChange={(e) => setGuestName(e.target.value)}
+                    placeholder="e.g. John Doe"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">Phone *</label>
+                  <input
+                    type="tel"
+                    required
+                    value={guestPhone}
+                    onChange={(e) => setGuestPhone(e.target.value)}
+                    placeholder="+91 555 0192"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">Phone Number</label>
-                  <input
-                    type="tel"
-                    value={guestPhone}
-                    onChange={(e) => setGuestPhone(e.target.value)}
-                    placeholder="+1 555 0192"
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
-                  />
-                </div>
-
                 <div>
                   <label className="block text-xs font-semibold text-[#292827] mb-1">Email</label>
                   <input
@@ -297,40 +599,213 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
                     value={guestEmail}
                     onChange={(e) => setGuestEmail(e.target.value)}
                     placeholder="guest@example.com"
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">Guests</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={selectedRoomType?.maxOccupancy || 20}
+                    value={numGuests}
+                    onChange={(e) => setNumGuests(e.target.value)}
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-[#292827] mb-1">Expected Check-out Date</label>
-                <input
-                  type="date"
-                  value={checkoutDate}
-                  onChange={(e) => setCheckoutDate(e.target.value)}
-                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">ID Proof Type</label>
+                  <input
+                    type="text"
+                    value={idProofType}
+                    onChange={(e) => setIdProofType(e.target.value)}
+                    placeholder="Aadhaar / Passport"
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">ID Number</label>
+                  <input
+                    type="text"
+                    value={idProofNumber}
+                    onChange={(e) => setIdProofNumber(e.target.value)}
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                  />
+                </div>
               </div>
+
+              {/* Commercials */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">Agreed Rate / night *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    required
+                    value={agreedRate}
+                    onChange={(e) => setAgreedRate(e.target.value)}
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                  />
+                  <p className="text-[10px] text-[#9a9794] mt-1">
+                    Snapshot at booking — later rate changes don’t move this stay.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#292827] mb-1">Source</label>
+                  <select
+                    value={source}
+                    onChange={(e) => setSource(e.target.value as BookingSource)}
+                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                  >
+                    {SOURCES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Stay total preview */}
+              {nightCount > 0 && parseFloat(agreedRate) > 0 && (
+                <div className="bg-[#fafaf8] border border-[#e8e4dd] rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="font-semibold text-[#73706d]">
+                    Room total · {nightCount} night{nightCount === 1 ? '' : 's'}
+                  </span>
+                  <span className="font-mono font-bold text-[#292827]">
+                    {hotel.currencySymbol || '$'}
+                    {(nightCount * parseFloat(agreedRate)).toFixed(2)}
+                  </span>
+                </div>
+              )}
+
+              {error && (
+                <div className="bg-[#ece6fb] border border-violet-soft rounded-lg p-3.5 text-xs text-primary-deep flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span className="font-medium">{error}</span>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#e8e4dd]">
                 <button
                   type="button"
-                  onClick={() => setIsCheckinModalOpen(false)}
+                  onClick={() => setIsBookingModalOpen(false)}
                   className="px-4 py-2 rounded-full border border-[#e8e4dd] text-xs font-semibold text-[#73706d]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || checkingAvailability || availableRooms.length === 0}
                   className="px-5 py-2 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-xs font-bold text-white shadow-sm disabled:opacity-50"
                 >
-                  {isSubmitting ? 'Checking In...' : 'Confirm Check-In'}
+                  {isSubmitting ? 'Booking…' : 'Confirm Reservation'}
                 </button>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {/* ===== Check-out dialog ===== */}
+      {checkoutTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-[#e8e4dd]">
+            <div className="flex items-center justify-between border-b border-[#e8e4dd] pb-3">
+              <h3 className="text-base font-bold text-[#292827]">Check Out</h3>
+              <button
+                onClick={() => setCheckoutTarget(null)}
+                className="p-1 rounded-full hover:bg-[#fafaf8] text-[#73706d]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2 text-sm">
+              <p className="text-[#292827]">
+                <strong>{checkoutTarget.resolvedGuestName}</strong> — Room {checkoutTarget.resolvedRoomNumber}
+              </p>
+              <p className="text-xs text-[#73706d]">
+                {checkoutTarget.checkInDate} → {checkoutTarget.checkOutDate} (
+                {nightsBetween(checkoutTarget.checkInDate, checkoutTarget.checkOutDate)} nights)
+              </p>
+            </div>
+
+            <div className="bg-[#fafaf8] border border-[#e8e4dd] rounded-lg p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[#73706d] font-medium">Folio balance</span>
+                <span className="font-mono font-bold text-[#1b1938]">
+                  {checkoutFolio
+                    ? `${hotel.currencySymbol || '$'}${Number(checkoutFolio.balance || 0).toFixed(2)}`
+                    : '—'}
+                </span>
+              </div>
+              <p className="text-[11px] text-[#9a9794]">
+                {checkoutFolio
+                  ? `Folio ${checkoutFolio.status}. Room-night charges are raised by night audit (not built yet).`
+                  : 'No folio found for this booking.'}
+              </p>
+            </div>
+
+            <p className="text-[11px] text-[#73706d]">
+              The room will be marked <strong>cleaning</strong> — housekeeping clears it back to available.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#e8e4dd]">
+              <button
+                type="button"
+                onClick={() => setCheckoutTarget(null)}
+                className="px-4 py-2 rounded-full border border-[#e8e4dd] text-xs font-semibold text-[#73706d]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmCheckOut}
+                disabled={isCheckingOut}
+                className="px-5 py-2 rounded-lg bg-[#155555] hover:bg-[#0e3030] text-xs font-bold text-white shadow-sm disabled:opacity-50"
+              >
+                {isCheckingOut ? 'Checking out…' : 'Confirm Check-Out'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const StatCard: React.FC<{ label: string; value: number; hint: string }> = ({ label, value, hint }) => (
+  <div className="bg-white border border-[#e8e4dd] p-5 rounded-xl shadow-xs">
+    <span className="text-xs text-[#73706d] font-medium">{label}</span>
+    <div className="text-2xl font-bold text-[#1b1938] mt-1 font-mono">{value}</div>
+    <div className="text-[11px] text-[#73706d] mt-1">{hint}</div>
+  </div>
+);
+
+const Section: React.FC<{
+  title: string;
+  empty: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ title, empty, icon, children }) => {
+  const count = React.Children.count(children);
+  return (
+    <div className="space-y-3">
+      <h3 className="font-bold text-sm text-[#292827] flex items-center gap-2">
+        {icon} {title}
+      </h3>
+      {count === 0 ? (
+        empty ? (
+          <div className="bg-white border border-[#e8e4dd] rounded-xl p-8 text-center text-xs text-[#73706d]">
+            {empty}
+          </div>
+        ) : null
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{children}</div>
       )}
     </div>
   );

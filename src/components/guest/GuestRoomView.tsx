@@ -192,13 +192,13 @@ export const GuestRoomView: React.FC = () => {
 
     try {
       const roomNum = room?.roomNumber || '101';
-      const guestName = room?.guestName || 'In-Room Guest';
+      const guestName = guestSession?.guestName || 'In-Room Guest';
 
       // NOTE: keep this payload to exactly the fields the `orders` create rule
       // allows for guests, and never send `undefined` (the Firestore SDK
       // rejects it) — omit optional fields instead.
       const notes = specialInstructions.trim();
-      await firestoreService.addOrder(hotel.id, {
+      const foodOrderId = await firestoreService.addOrder(hotel.id, {
         roomId: room?.id || guestSession?.roomId || '',
         roomNumber: roomNum,
         guestUid: user?.id || guestSession?.uid || '',
@@ -214,6 +214,18 @@ export const GuestRoomView: React.FC = () => {
         ...(notes ? { instructions: notes } : {}),
         createdAt: new Date().toISOString(),
       });
+
+      // Folio linkage: if this room has an active CHECKED_IN booking, the
+      // server posts a FOOD charge to that booking's folio. Folios are
+      // staff-only, so the write happens via the Admin SDK. Purely additive —
+      // the guest's order is already placed and must never be blocked by it.
+      if (foodOrderId) {
+        void firestoreService
+          .linkOrderCharge(foodOrderId)
+          .then((r) => {
+            if (!r.linked) console.warn('[folio] charge not linked:', r.reason);
+          });
+      }
 
       setCart([]);
       setIsCartOpen(false);
@@ -235,9 +247,9 @@ export const GuestRoomView: React.FC = () => {
 
     try {
       const roomNum = room?.roomNumber || '101';
-      const guestName = room?.guestName || 'In-Room Guest';
+      const guestName = guestSession?.guestName || 'In-Room Guest';
 
-      await firestoreService.addOrder(hotel.id, {
+      const serviceOrderId = await firestoreService.addOrder(hotel.id, {
         roomId: room?.id || guestSession?.roomId || '',
         roomNumber: roomNum,
         guestUid: user?.id || guestSession?.uid || '',
@@ -255,6 +267,16 @@ export const GuestRoomView: React.FC = () => {
         ...(serviceNotes.trim() ? { instructions: serviceNotes.trim() } : {}),
         createdAt: new Date().toISOString(),
       });
+
+      // Folio linkage — SERVICE charge on the active booking's folio (see the
+      // dining order above for why this is server-side and best-effort).
+      if (serviceOrderId) {
+        void firestoreService
+          .linkOrderCharge(serviceOrderId)
+          .then((r) => {
+            if (!r.linked) console.warn('[folio] charge not linked:', r.reason);
+          });
+      }
 
       setSelectedService(null);
       setServiceNotes('');
@@ -339,7 +361,7 @@ export const GuestRoomView: React.FC = () => {
                 </span>
               </div>
               <p className="t-caption text-on-dark-mute" style={{ fontSize: 12 }}>
-                Welcome{room?.guestName ? `, ${room.guestName}` : ''} • Tap items to order to your room
+                Welcome{guestSession?.guestName ? `, ${guestSession.guestName}` : ''} • Tap items to order to your room
               </p>
             </div>
           </div>
