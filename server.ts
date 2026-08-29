@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 // ---------------------------------------------------------------------------
 // Supabase admin (service-role) client.
@@ -22,9 +22,18 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   );
 }
 
-const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
+// Lazily created so the server can boot even before .env is filled in.
+// API routes respond 503 (see requireSupabaseConfigured) until then.
+let _admin: SupabaseClient | null = null;
+function getAdmin(): SupabaseClient | null {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return null;
+  if (!_admin) {
+    _admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+  }
+  return _admin;
+}
 
 /** Verify a Supabase JWT sent by the client and return its claims. */
 async function verifySupabaseJwt(token: string): Promise<{
@@ -33,6 +42,8 @@ async function verifySupabaseJwt(token: string): Promise<{
   role: string;
   isAnonymous: boolean;
 } | null> {
+  const admin = getAdmin();
+  if (!admin) return null;
   const {
     data: { user },
     error,
@@ -78,6 +89,8 @@ function rateLimit(maxRequests: number, windowMs: number) {
  * The CHECKED_IN booking currently occupying a room, if any.
  */
 async function findActiveBooking(hotelId: string, roomId: string) {
+  const admin = getAdmin();
+  if (!admin) return null;
   const { data, error } = await admin
     .from('bookings')
     .select('id,guest_id,room_id,status')
@@ -92,6 +105,8 @@ async function findActiveBooking(hotelId: string, roomId: string) {
 /** Display name for the in-house guest from guests/{guestId}. */
 async function resolveGuestName(hotelId: string, guestId?: string): Promise<string> {
   if (!guestId) return '';
+  const admin = getAdmin();
+  if (!admin) return '';
   try {
     const { data } = await admin
       .from('guests')
@@ -111,6 +126,11 @@ async function resolveGuestName(hotelId: string, guestId?: string): Promise<stri
  * from the profiles row (service-role bypasses RLS).
  */
 async function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
+  const admin = getAdmin();
+  if (!admin) {
+    res.status(503).json({ error: 'Supabase is not configured on the server (missing service credentials).' });
+    return;
+  }
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
@@ -135,12 +155,13 @@ async function requireSuperAdmin(req: Request, res: Response, next: NextFunction
   }
 }
 
-function requireSupabaseConfigured(res: Response): boolean {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+/** Returns the service-role client, or 503s and returns null when unconfigured. */
+function requireSupabaseConfigured(res: Response): SupabaseClient | null {
+  const admin = getAdmin();
+  if (!admin) {
     res.status(503).json({ error: 'Supabase is not configured on the server (missing service credentials).' });
-    return false;
   }
-  return true;
+  return admin;
 }
 
 async function startServer() {
@@ -156,7 +177,8 @@ async function startServer() {
   // Guest session — exchange a room QR token for a room-scoped session row.
   // -----------------------------------------------------------------------
   app.post('/api/guest/session', rateLimit(20, 60_000), async (req: Request, res: Response) => {
-    if (!requireSupabaseConfigured(res)) return;
+    const admin = requireSupabaseConfigured(res);
+    if (!admin) return;
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
@@ -231,7 +253,8 @@ async function startServer() {
     '/api/guest/orders/:orderId/charge',
     rateLimit(60, 60_000),
     async (req: Request, res: Response) => {
-      if (!requireSupabaseConfigured(res)) return;
+      const admin = requireSupabaseConfigured(res);
+      if (!admin) return;
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
@@ -273,7 +296,8 @@ async function startServer() {
   // password directly), matching the old Admin-SDK flow.
   // -----------------------------------------------------------------------
   app.post('/api/admin/create-hotel-user', requireSuperAdmin, async (req: Request, res: Response) => {
-    if (!requireSupabaseConfigured(res)) return;
+    const admin = requireSupabaseConfigured(res);
+    if (!admin) return;
     const { hotelId, hotelName, email, password, name, phone } = req.body || {};
     if (!hotelId || !email || !password) {
       return res.status(400).json({ error: 'Missing required parameters: hotelId, email, and password' });
@@ -345,7 +369,8 @@ async function startServer() {
   });
 
   app.post('/api/admin/delete-hotel-user', requireSuperAdmin, async (req: Request, res: Response) => {
-    if (!requireSupabaseConfigured(res)) return;
+    const admin = requireSupabaseConfigured(res);
+    if (!admin) return;
     const { email } = req.body || {};
     if (!email) return res.status(400).json({ error: 'Email is required' });
     try {
@@ -366,7 +391,8 @@ async function startServer() {
     requireSuperAdmin,
     rateLimit(30, 60_000),
     async (req: Request, res: Response) => {
-      if (!requireSupabaseConfigured(res)) return;
+      const admin = requireSupabaseConfigured(res);
+      if (!admin) return;
       const { email, role, hotelId } = req.body || {};
       if (!email || !role) return res.status(400).json({ error: 'Email and role are required' });
       try {
