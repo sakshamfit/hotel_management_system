@@ -75,7 +75,7 @@ export const HotelDashboardTab: React.FC<Props> = ({ hotel, onNavigateTab }) => 
             </span>
             <span className="w-1.5 h-1.5 rounded-full bg-teal-mid animate-pulse" />
             <span className="text-[11px] text-teal-deep font-mono font-medium">
-              Firestore Multi-Tenant Scoped
+              Supabase Multi-Tenant Scoped
             </span>
           </div>
           <h1 className="t-display-lg mt-1.5">

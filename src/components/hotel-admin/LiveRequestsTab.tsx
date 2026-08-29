@@ -106,7 +106,7 @@ export const LiveRequestsTab: React.FC<Props> = ({ hotel }) => {
             <div className="flex items-center gap-2">
               <h2 className="t-display-md">Live Guest Requests & Orders</h2>
               <span className="bg-[#e7efee] text-[#0e3030] border border-[#c9dcd9] text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full font-bold">
-                Real-Time Firestore
+                Real-Time Sync
               </span>
             </div>
             <p className="text-xs text-[#73706d]">

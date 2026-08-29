@@ -10,12 +10,14 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "create-super-admin": "tsx scripts/create-super-admin.ts",
-    "migrate:reservations": "tsx scripts/migrate-reservations.ts",
+    "db:reset": "supabase db reset",
+    "db:push": "supabase db push",
     "lint": "tsc --noEmit",
     "check:dates": "tsx scripts/check-dates.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
+    "@supabase/supabase-js": "^2.112.4",
     "@tailwindcss/vite": "^4.1.14",
     "@types/canvas-confetti": "^1.9.0",
     "@types/qrcode": "^1.5.6",
@@ -23,8 +25,6 @@
     "canvas-confetti": "^1.9.4",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
-    "firebase": "^12.18.0",
-    "firebase-admin": "^14.3.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "qrcode": "^1.5.4",
@@ -33,13 +33,13 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3",
-    "@types/express": "^4.17.21"
+    "vite": "^6.2.3"
   }
 }

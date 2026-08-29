@@ -1,20 +1,25 @@
-import { ref, uploadBytesResumable, getDownloadURL, deleteObject, listAll } from 'firebase/storage';
-import { storage } from '../firebase/config';
+import { supabase } from '../supabase/config';
+
+/**
+ * Image uploads — Supabase Storage, bucket `hotel-media`.
+ * Public read (the app uses plain public URLs); writes restricted to staff by
+ * storage RLS. Object paths mirror the old Firebase layout:
+ *   hotels/{hotelId}/rooms/{roomId}.jpg
+ *   hotels/{hotelId}/menu/{itemId}.jpg
+ */
+
+export const BUCKET = 'hotel-media';
 
 /** Max upload size: 5MB */
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
-/** Only real image formats are accepted (checked by MIME type AND extension) */
+/** Only real image formats are accepted (MIME type AND extension). */
 export const ALLOWED_IMAGE_MIME: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
   'image/webp': 'webp',
 };
 
-/**
- * Validates a candidate upload file.
- * Returns an error message string, or null when the file is acceptable.
- */
 export function validateImageFile(file: File): string | null {
   const mime = (file.type || '').toLowerCase();
   if (!ALLOWED_IMAGE_MIME[mime]) {
@@ -30,100 +35,111 @@ export function validateImageFile(file: File): string | null {
   return null;
 }
 
-/** Maps a validated MIME type to a canonical file extension (jpg/png/webp). */
 export function extensionForFile(file: File): string {
   return ALLOWED_IMAGE_MIME[(file.type || '').toLowerCase()] || 'jpg';
 }
 
 export interface UploadOptions {
   file: File;
-  /** Full Storage path INCLUDING the file name, e.g. hotels/h1/menu/i1/image.jpg */
+  /** Full Storage path INCLUDING file name, e.g. hotels/h1/menu/i1/image.jpg */
   path: string;
   onProgress?: (percent: number) => void;
 }
 
 /**
- * Uploads an image to Firebase Storage with a resumable task and progress reporting.
- * Returns the long-lived download URL from getDownloadURL().
+ * Uploads an image and returns its public URL. Uses XHR for progress reporting
+ * (supabase-js v2 does not expose upload progress directly).
  */
-export function uploadImage({ file, path, onProgress }: UploadOptions): Promise<string> {
+export async function uploadImage({ file, path, onProgress }: UploadOptions): Promise<string> {
   const validationError = validateImageFile(file);
-  if (validationError) {
-    return Promise.reject(new Error(validationError));
-  }
+  if (validationError) throw new Error(validationError);
 
-  return new Promise((resolve, reject) => {
-    const storageRef = ref(storage, path);
-    const task = uploadBytesResumable(storageRef, file, {
-      contentType: file.type,
-    });
+  const { data: session } = await supabase.auth.getSession();
+  const token = session?.session?.access_token;
 
-    task.on(
-      'state_changed',
-      (snapshot) => {
-        const pct = snapshot.totalBytes > 0
-          ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
-          : 0;
-        onProgress?.(pct);
-      },
-      (err) => reject(err),
-      async () => {
-        try {
-          const url = await getDownloadURL(task.snapshot.ref);
-          onProgress?.(100);
-          resolve(url);
-        } catch (err) {
-          reject(err);
-        }
+  const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  const publicUrl = urlData.publicUrl;
+
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${supabaseUrl()}/storage/v1/object/${BUCKET}/${path.replace(/^\//, '')}`);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.setRequestHeader('x-upsert', 'true');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(100);
+        resolve();
+      } else {
+        reject(new Error(`Upload failed (HTTP ${xhr.status}).`));
       }
-    );
+    };
+    xhr.onerror = () => reject(new Error('Upload failed — network error.'));
+    xhr.send(file);
   });
+
+  return publicUrl;
 }
 
-function isFirebaseStorageUrl(url: string): boolean {
+function supabaseUrl(): string {
+  return (import.meta.env.VITE_SUPABASE_URL as string).replace(/\/$/, '');
+}
+
+/** True when a URL points at this Supabase Storage bucket. */
+function isSupabaseStorageUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return (
-      parsed.host.endsWith('firebasestorage.app') ||
-      parsed.host.endsWith('firebasestorage.googleapis.com') ||
-      parsed.host.endsWith('storage.googleapis.com') ||
-      parsed.host.includes('firebasestorage')
-    );
+    const base = (import.meta.env.VITE_SUPABASE_URL as string) || '';
+    return parsed.href.includes('/storage/v1/object/') || (!!base && parsed.host === new URL(base).host);
   } catch {
     return false;
   }
 }
 
-/**
- * Deletes a Storage object given its download URL.
- * Silently ignores files that are missing, already deleted, or hosted elsewhere
- * (e.g. legacy external URLs) so callers never need to handle cleanup errors.
- */
-export async function deleteImageByUrl(url?: string | null): Promise<void> {
-  if (!url || !isFirebaseStorageUrl(url)) return;
+/** Extracts the object path within the bucket from a public/rendered URL. */
+function objectPathFromUrl(url: string): string | null {
   try {
-    await deleteObject(ref(storage, url));
-  } catch (err: any) {
-    const code = err?.code || '';
-    if (!code.includes('object-not-found')) {
-      console.warn('Storage cleanup skipped:', code || err?.message);
-    }
+    const parsed = new URL(url);
+    const marker = `/storage/v1/object/public/${BUCKET}/`;
+    const idx = parsed.pathname.indexOf(marker);
+    if (idx === -1) return null;
+    return decodeURIComponent(parsed.pathname.slice(idx + marker.length));
+  } catch {
+    return null;
   }
 }
 
-/**
- * Recursively deletes every object under a Storage folder prefix
- * (used when a whole hotel tenant is deleted).
- */
-export async function deleteFolder(pathPrefix: string): Promise<void> {
+/** Deletes a Storage object given its URL. Best effort — never throws. */
+export async function deleteImageByUrl(url?: string | null): Promise<void> {
+  if (!url || !isSupabaseStorageUrl(url)) return;
+  const path = objectPathFromUrl(url);
+  if (!path) return;
   try {
-    const folderRef = ref(storage, pathPrefix);
-    const listing = await listAll(folderRef);
-    await Promise.all([
-      ...listing.items.map((item) => deleteObject(item).catch(() => undefined)),
-      ...listing.prefixes.map((sub) => deleteFolder(sub.fullPath)),
-    ]);
+    await supabase.storage.from(BUCKET).remove([path]);
   } catch (err: any) {
-    console.warn('Storage folder cleanup skipped:', err?.code || err?.message);
+    console.warn('Storage cleanup skipped:', err?.message || err);
+  }
+}
+
+/** Recursively deletes every object under a prefix (used on hotel deletion). */
+export async function deleteFolder(pathPrefix: string): Promise<void> {
+  const prefix = pathPrefix.replace(/^\/+|\/+$/g, '');
+  try {
+    const { data: list, error } = await supabase.storage.from(BUCKET).list(prefix, { limit: 1000 });
+    if (error) throw error;
+    if (!list) return;
+
+    const files = list.filter((i) => i.id).map((i) => `${prefix}/${i.name}`);
+    const prefixes = list.filter((i) => !i.id).map((i) => i.name);
+
+    if (files.length) {
+      await supabase.storage.from(BUCKET).remove(files);
+    }
+    await Promise.all(prefixes.map((p) => deleteFolder(`${prefix}/${p}`)));
+  } catch (err: any) {
+    console.warn('Storage folder cleanup skipped:', err?.message || err);
   }
 }

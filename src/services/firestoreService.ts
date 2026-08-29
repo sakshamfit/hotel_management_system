@@ -1,27 +1,25 @@
+/**
+ * Data + auth service for the app.
+ *
+ * HISTORY: this module originally wrapped Firestore (`firestoreService`). It now
+ * wraps Supabase — Postgres + RLS + Realtime + Supabase Auth. The exported name
+ * `firestoreService` and every method signature / returned object shape is kept
+ * identical so the UI components do not change.
+ *
+ * Tables (snake_case) map to camelCase app objects in src/services/db.ts.
+ */
+import { supabase } from '../supabase/config';
 import {
-  collection,
-  doc,
-  getDocs,
-  getDoc,
-  setDoc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-  runTransaction,
-  writeBatch,
-  serverTimestamp,
-  Unsubscribe,
-} from 'firebase/firestore';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { initializeApp, deleteApp, FirebaseApp } from 'firebase/app';
-import { getAuth as getSecondaryAuth, createUserWithEmailAndPassword, signOut as signOutFromSecondary } from 'firebase/auth';
-import { db, auth, firebaseConfig } from '../firebase/config';
-import {
+  subscribeTable,
+  subscribeRow,
+  insertRow,
+  updateRow,
+  deleteRow,
+  fetchRow,
+  rowToObject,
+  type UnsubscribeShim,
+} from './db';
+import type {
   Hotel,
   Room,
   RoomTypeDefinition,
@@ -29,29 +27,24 @@ import {
   Booking,
   BookingStatus,
   CreateBookingInput,
-  RoomNight,
   Folio,
   Charge,
   FoodItem,
   HotelService,
   ServiceRequest,
-  DailyReportData,
 } from '../types';
-import { enumerateNights, isValidStay, roomNightId, nightsBetween } from '../utils/dates';
+import { enumerateNights, isValidStay, nightsBetween } from '../utils/dates';
+
+export type { UnsubscribeShim as Unsubscribe };
 
 export interface RoomAvailability {
   room: Room;
   available: boolean;
-  /** Set when `available` is false — the booking holding one of these nights. */
   conflictBookingId?: string;
-  /** Nights in the requested window that are already taken. */
   conflictDates?: string[];
 }
 
-/**
- * Thrown when the stay cannot be booked. Carries a stable `code` so the UI can
- * distinguish a genuine double-booking from a validation problem.
- */
+/** Stable error code so the UI can distinguish double-booking from validation. */
 export class BookingConflictError extends Error {
   code: string;
   conflictDates?: string[];
@@ -63,36 +56,28 @@ export class BookingConflictError extends Error {
   }
 }
 
+// App expects an unsubscribe function; db.ts returns () => void.
+type Unsub = () => void;
+
 export const firestoreService = {
   // ==========================================
-  // USERS (Root Collection: users)
-  // Stores role + hotelId for every Firebase Auth user.
-  // Used instead of custom claims so the Super Admin's session
-  // is never affected when creating a new hotel admin (free tier, no Blaze).
+  // USERS — staff role lives in `profiles`
   // ==========================================
 
-  // Read a user's role document (role + hotelId) from Firestore.
-  // Returns null if the doc is missing or the read is denied.
   fetchUserRole: async (uid: string): Promise<{ role: string | null; hotelId: string | null } | null> => {
     try {
-      const snap = await getDoc(doc(db, 'users', uid));
-      if (!snap.exists()) return null;
-      const data = snap.data();
-      return {
-        role: (data.role as string) || null,
-        hotelId: (data.hotelId as string) || null,
-      };
+      const row = await fetchRow<{ role: string; hotelId: string | null }>('profiles', uid);
+      if (!row) return null;
+      return { role: row.role || null, hotelId: row.hotelId || null };
     } catch (err) {
-      console.warn(`Failed to read users/${uid} role document:`, err);
+      console.warn(`Failed to read profiles/${uid}:`, err);
       return null;
     }
   },
 
-  // Create a hotel admin login using a temporary SECONDARY Firebase app instance.
-  // This is the free-tier strategy: it creates the Firebase Auth user WITHOUT
-  // logging out the currently signed-in Super Admin (no Admin SDK / no Cloud Function),
-  // and persists the role in a users/{uid} Firestore document.
-  // Falls back to the server Admin SDK endpoint if the client-side signup is blocked.
+  // Create a hotel admin login via the SERVER (service-role key creates the
+  // Auth user + profile). Signups are disabled client-side; this is the only
+  // path and it does not log the super admin out.
   createHotelLogin: async (
     hotelId: string,
     hotelName: string,
@@ -101,415 +86,194 @@ export const firestoreService = {
     name?: string,
     phone?: string
   ): Promise<{ success: boolean; uid: string; email: string; role: string; hotelId: string }> => {
-    const trimmedEmail = email.toLowerCase().trim();
-
-    try {
-      // ---- PRIMARY: Secondary app instance (free tier, no server needed) ----
-      const appName = `SecondaryHotelLoginApp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      let secondaryApp: FirebaseApp | null = null;
-      try {
-        secondaryApp = initializeApp(firebaseConfig, appName);
-        const secondaryAuth = getSecondaryAuth(secondaryApp);
-        const userCred = await createUserWithEmailAndPassword(secondaryAuth, trimmedEmail, password);
-        const newUid = userCred.user.uid;
-
-        // Persist role + hotelId in Firestore (custom claims can't be set client-side)
-        await setDoc(doc(db, 'users', newUid), {
-          role: 'hotel_admin',
-          hotelId,
-          email: trimmedEmail,
-          displayName: name || `${hotelName} Admin`,
-          phone: phone || '',
-          createdAt: new Date().toISOString(),
-        });
-
-        // Clear the secondary session and clean up the temporary app
-        await signOutFromSecondary(secondaryAuth);
-
-        return { success: true, uid: newUid, email: trimmedEmail, role: 'hotel_admin', hotelId };
-      } finally {
-        if (secondaryApp) {
-          try {
-            await deleteApp(secondaryApp);
-          } catch (delErr) {
-            console.warn('Could not delete secondary Firebase app:', delErr);
-          }
-        }
-      }
-    } catch (primaryErr: any) {
-      // ---- FALLBACK: Admin SDK endpoint (server) — also writes the users/{uid} doc ----
-      console.warn('Secondary-app signup failed, falling back to Admin SDK endpoint:', primaryErr);
-      return firestoreService.createHotelUserAuth(
-        hotelId,
-        hotelName,
-        trimmedEmail,
-        password,
-        name,
-        phone
-      );
-    }
+    return firestoreService.createHotelUserAuth(hotelId, hotelName, email, password, name, phone);
   },
 
   // ==========================================
-  // HOTELS (Root Collection: hotels)
+  // HOTELS
   // ==========================================
+  subscribeHotels: (onUpdate: (hotels: Hotel[]) => void, onError?: (err: Error) => void): Unsub =>
+    subscribeTable<Hotel>('hotels', onUpdate, { orderBy: { column: 'created_at', ascending: false } }, onError),
 
-  // Get all hotels (Super Admin only)
-  subscribeHotels: (onUpdate: (hotels: Hotel[]) => void, onError?: (err: Error) => void): Unsubscribe => {
-    const hotelsCol = collection(db, 'hotels');
-    const q = query(hotelsCol, orderBy('createdAt', 'desc'));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const hotels: Hotel[] = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data(),
-        })) as Hotel[];
-        onUpdate(hotels);
-      },
-      (error) => {
-        console.error('Error subscribing to hotels:', error);
-        if (onError) onError(error);
-      }
-    );
-  },
-
-  // Get single hotel by ID
   subscribeHotel: (
     hotelId: string,
     onUpdate: (hotel: Hotel | null) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const hotelRef = doc(db, 'hotels', hotelId);
-    return onSnapshot(
-      hotelRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          onUpdate({ id: docSnap.id, ...docSnap.data() } as Hotel);
-        } else {
-          onUpdate(null);
-        }
-      },
-      (error) => {
-        console.error(`Error subscribing to hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+  ): Unsub => subscribeRow<Hotel>('hotels', hotelId, onUpdate, onError),
 
-  getHotel: async (hotelId: string): Promise<Hotel | null> => {
-    const hotelRef = doc(db, 'hotels', hotelId);
-    const snap = await getDoc(hotelRef);
-    if (!snap.exists()) return null;
-    return { id: snap.id, ...snap.data() } as Hotel;
-  },
+  getHotel: (hotelId: string) => fetchRow<Hotel>('hotels', hotelId) as Promise<Hotel | null>,
 
   createHotelDoc: async (hotelId: string, data: Omit<Hotel, 'id'>): Promise<string> => {
-    const hotelRef = doc(db, 'hotels', hotelId);
-    const payload = {
-      ...data,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    await setDoc(hotelRef, payload);
+    // Caller provides a pre-generated uid (from the hotel Auth user); insert
+    // with that id by passing it explicitly.
+    const { error } = await supabase
+      .from('hotels')
+      .insert({ id: hotelId, ...{ ...(data as object) }, created_at: new Date().toISOString() });
+    if (error) throw new Error(error.message);
     return hotelId;
   },
 
   updateHotelDoc: async (hotelId: string, data: Partial<Hotel>): Promise<void> => {
-    const hotelRef = doc(db, 'hotels', hotelId);
-    await updateDoc(hotelRef, {
-      ...data,
-      updatedAt: new Date().toISOString(),
-    });
+    const { error } = await supabase
+      .from('hotels')
+      .update({ ...(data as object), updated_at: new Date().toISOString() })
+      .eq('id', hotelId);
+    if (error) throw new Error(error.message);
   },
 
   deleteHotelDoc: async (hotelId: string): Promise<void> => {
-    // Delete subcollections documents first
-    const subcollections = ['rooms', 'foodItems', 'services', 'orders', 'bookings', 'staff'];
-    for (const sub of subcollections) {
-      try {
-        const subCol = collection(db, 'hotels', hotelId, sub);
-        const subSnap = await getDocs(subCol);
-        for (const docItem of subSnap.docs) {
-          await deleteDoc(doc(db, 'hotels', hotelId, sub, docItem.id));
-        }
-      } catch (e) {
-        console.warn(`Could not clear subcollection ${sub}:`, e);
-      }
-    }
-    const hotelRef = doc(db, 'hotels', hotelId);
-    await deleteDoc(hotelRef);
+    // ON DELETE CASCADE removes every tenant row. Just delete the hotel.
+    await supabase.from('hotels').delete().eq('id', hotelId);
   },
 
   // ==========================================
-  // ROOMS (Subcollection: hotels/{hotelId}/rooms)
+  // ROOMS
   // ==========================================
-
   subscribeRooms: (
     hotelId: string,
     onUpdate: (rooms: Room[]) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const roomsCol = collection(db, 'hotels', hotelId, 'rooms');
-    const q = query(roomsCol, orderBy('roomNumber', 'asc'));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const rooms: Room[] = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          hotelId,
-          ...docSnap.data(),
-        })) as Room[];
-        onUpdate(rooms);
-      },
-      (error) => {
-        console.error(`Error subscribing to rooms for hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+  ): Unsub =>
+    subscribeTable<Room>(
+      'rooms',
+      (rows) => onUpdate(rows.map((r) => ({ ...r, hotelId }))),
+      { hotelId, orderBy: { column: 'room_number', ascending: true } },
+      onError
+    ),
 
-  /**
-   * Single-room listener — used by the guest portal.
-   *
-   * Guests are scoped to ONE room (their own) by firestore.rules, so they must
-   * read by document id rather than listing the whole rooms collection
-   * (which also carries other guests' names and phone numbers).
-   */
+  /** Single-room listener for the guest portal (RLS only returns their room). */
   subscribeRoom: (
     hotelId: string,
     roomId: string,
     onUpdate: (room: Room | null) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const roomRef = doc(db, 'hotels', hotelId, 'rooms', roomId);
-    return onSnapshot(
-      roomRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          onUpdate({ id: docSnap.id, hotelId, ...docSnap.data() } as Room);
-        } else {
-          onUpdate(null);
-        }
-      },
-      (error) => {
-        console.error(`Error subscribing to room ${roomId} for hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+  ): Unsub =>
+    subscribeRow<Room>(
+      'rooms',
+      roomId,
+      (room) => onUpdate(room ? { ...room, hotelId } : null),
+      onError
+    ),
 
-  addRoom: async (hotelId: string, roomData: Omit<Room, 'id' | 'hotelId'>): Promise<string> => {
-    const roomsCol = collection(db, 'hotels', hotelId, 'rooms');
-    const newDoc = await addDoc(roomsCol, {
-      ...roomData,
-      createdAt: new Date().toISOString(),
-    });
-    return newDoc.id;
-  },
+  addRoom: (hotelId: string, roomData: Omit<Room, 'id' | 'hotelId'>) =>
+    insertRow('rooms', { ...(roomData as object), hotelId }),
 
-  updateRoom: async (hotelId: string, roomId: string, data: Partial<Room>): Promise<void> => {
-    const roomRef = doc(db, 'hotels', hotelId, 'rooms', roomId);
-    await updateDoc(roomRef, data);
-  },
+  updateRoom: (hotelId: string, roomId: string, data: Partial<Room>) =>
+    updateRow('rooms', roomId, data as Record<string, unknown>),
 
-  deleteRoom: async (hotelId: string, roomId: string): Promise<void> => {
-    const roomRef = doc(db, 'hotels', hotelId, 'rooms', roomId);
-    await deleteDoc(roomRef);
-  },
+  deleteRoom: (hotelId: string, roomId: string) => deleteRow('rooms', roomId),
 
   // ==========================================
-  // FOOD MENU ITEMS (Subcollection: hotels/{hotelId}/foodItems)
+  // FOOD MENU
   // ==========================================
-
   subscribeFoodItems: (
     hotelId: string,
     onUpdate: (items: FoodItem[]) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const col = collection(db, 'hotels', hotelId, 'foodItems');
-    const q = query(col, orderBy('name', 'asc'));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const items: FoodItem[] = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          hotelId,
-          ...docSnap.data(),
-        })) as FoodItem[];
-        onUpdate(items);
-      },
-      (error) => {
-        console.error(`Error subscribing to foodItems for hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+  ): Unsub =>
+    subscribeTable<FoodItem>(
+      'food_items',
+      (rows) => onUpdate(rows.map((r) => ({ ...r, hotelId }))),
+      { hotelId, orderBy: { column: 'name', ascending: true } },
+      onError
+    ),
 
-  addFoodItem: async (hotelId: string, itemData: Omit<FoodItem, 'id' | 'hotelId'>): Promise<string> => {
-    const col = collection(db, 'hotels', hotelId, 'foodItems');
-    const newDoc = await addDoc(col, {
-      ...itemData,
-      createdAt: new Date().toISOString(),
-    });
-    return newDoc.id;
-  },
+  addFoodItem: (hotelId: string, itemData: Omit<FoodItem, 'id' | 'hotelId'>) =>
+    insertRow('food_items', { ...(itemData as object), hotelId }),
 
-  updateFoodItem: async (hotelId: string, itemId: string, data: Partial<FoodItem>): Promise<void> => {
-    const itemRef = doc(db, 'hotels', hotelId, 'foodItems', itemId);
-    await updateDoc(itemRef, data);
-  },
+  updateFoodItem: (hotelId: string, itemId: string, data: Partial<FoodItem>) =>
+    updateRow('food_items', itemId, data as Record<string, unknown>),
 
-  deleteFoodItem: async (hotelId: string, itemId: string): Promise<void> => {
-    const itemRef = doc(db, 'hotels', hotelId, 'foodItems', itemId);
-    await deleteDoc(itemRef);
-  },
+  deleteFoodItem: (hotelId: string, itemId: string) => deleteRow('food_items', itemId),
 
   // ==========================================
-  // SERVICES (Subcollection: hotels/{hotelId}/services)
+  // SERVICES
   // ==========================================
-
   subscribeServices: (
     hotelId: string,
     onUpdate: (services: HotelService[]) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const col = collection(db, 'hotels', hotelId, 'services');
-    const q = query(col, orderBy('name', 'asc'));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const services: HotelService[] = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          hotelId,
-          ...docSnap.data(),
-        })) as HotelService[];
-        onUpdate(services);
-      },
-      (error) => {
-        console.error(`Error subscribing to services for hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+  ): Unsub =>
+    subscribeTable<HotelService>(
+      'services',
+      (rows) => onUpdate(rows.map((r) => ({ ...r, hotelId }))),
+      { hotelId, orderBy: { column: 'name', ascending: true } },
+      onError
+    ),
 
-  addService: async (hotelId: string, serviceData: Omit<HotelService, 'id' | 'hotelId'>): Promise<string> => {
-    const col = collection(db, 'hotels', hotelId, 'services');
-    const newDoc = await addDoc(col, {
-      ...serviceData,
-      createdAt: new Date().toISOString(),
-    });
-    return newDoc.id;
-  },
+  addService: (hotelId: string, serviceData: Omit<HotelService, 'id' | 'hotelId'>) =>
+    insertRow('services', { ...(serviceData as object), hotelId }),
 
-  updateService: async (hotelId: string, serviceId: string, data: Partial<HotelService>): Promise<void> => {
-    const serviceRef = doc(db, 'hotels', hotelId, 'services', serviceId);
-    await updateDoc(serviceRef, data);
-  },
+  updateService: (hotelId: string, serviceId: string, data: Partial<HotelService>) =>
+    updateRow('services', serviceId, data as Record<string, unknown>),
 
-  deleteService: async (hotelId: string, serviceId: string): Promise<void> => {
-    const serviceRef = doc(db, 'hotels', hotelId, 'services', serviceId);
-    await deleteDoc(serviceRef);
-  },
+  deleteService: (hotelId: string, serviceId: string) => deleteRow('services', serviceId),
 
   // ==========================================
-  // ORDERS & REQUESTS (Subcollection: hotels/{hotelId}/orders)
+  // ORDERS / REQUESTS
   // ==========================================
-
   subscribeOrders: (
     hotelId: string,
     onUpdate: (orders: ServiceRequest[]) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const col = collection(db, 'hotels', hotelId, 'orders');
-    const q = query(col, orderBy('createdAt', 'desc'));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const orders: ServiceRequest[] = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          hotelId,
-          ...docSnap.data(),
-        })) as ServiceRequest[];
-        onUpdate(orders);
-      },
-      (error) => {
-        console.error(`Error subscribing to orders for hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+  ): Unsub =>
+    subscribeTable<ServiceRequest>(
+      'orders',
+      (rows) => onUpdate(rows.map((r) => ({ ...r, hotelId }))),
+      { hotelId, orderBy: { column: 'created_at', ascending: false } },
+      onError
+    ),
 
-  /**
-   * Orders belonging to ONE guest, identified by the anonymous uid stamped onto
-   * the order at creation time (see GuestRoomView / the `orders` rules).
-   *
-   * Deliberately a single equality filter with no orderBy: a composite index
-   * would otherwise be required. Sorting newest-first happens client-side.
-   */
   subscribeGuestOrders: (
     hotelId: string,
     guestUid: string,
     onUpdate: (orders: ServiceRequest[]) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const col = collection(db, 'hotels', hotelId, 'orders');
-    const q = query(col, where('guestUid', '==', guestUid));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const orders: ServiceRequest[] = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          hotelId,
-          ...docSnap.data(),
-        })) as ServiceRequest[];
-        orders.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-        onUpdate(orders);
+  ): Unsub =>
+    subscribeTable<ServiceRequest>(
+      'orders',
+      (rows) => {
+        const sorted = rows
+          .map((r) => ({ ...r, hotelId }))
+          .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        onUpdate(sorted);
       },
-      (error) => {
-        console.error(`Error subscribing to guest orders for hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+      { hotelId, filters: [{ column: 'guest_uid', value: guestUid }] },
+      onError
+    ),
 
-  // Stream DOC CHANGES for a hotel's orders collection so callers can detect
-  // genuinely NEW documents (snapshot.docChanges() with type === "added").
-  // - The very first snapshot reports every existing doc as "added", so the
-  //   `isFirst` flag lets callers skip the initial load / pre-existing orders.
-  // - Subsequent callbacks only carry real-time additions.
+  // Real-time NEW-order stream for the alert center. Emits added docs, skipping
+  // the initial load (isFirst) just like the Firestore docChanges version.
   subscribeOrderChanges: (
     hotelId: string,
     onChanges: (added: Array<{ id: string; data: any }>, isFirst: boolean) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const col = collection(db, 'hotels', hotelId, 'orders');
-    const q = query(col, orderBy('createdAt', 'desc'));
+  ): Unsub => {
     let isFirst = true;
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const added = snapshot
-          .docChanges()
-          .filter((change) => change.type === 'added')
-          .map((change) => ({ id: change.doc.id, data: change.doc.data() }));
+    let seen = new Set<string>();
+    return subscribeTable<ServiceRequest>(
+      'orders',
+      (rows) => {
+        // Firestore delivered "added" changes; approximate by diffing against
+        // the set of ids we have already emitted.
+        const added = rows
+          .filter((r) => !seen.has(r.id))
+          .map((r) => ({ id: r.id, data: { ...r, hotelId } }));
+        rows.forEach((r) => seen.add(r.id));
         onChanges(added, isFirst);
         isFirst = false;
       },
-      (error) => {
-        console.error(`Error subscribing to order changes for hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
+      { hotelId, orderBy: { column: 'created_at', ascending: false } },
+      onError
     );
   },
 
   createOrder: async (hotelId: string, orderData: any): Promise<string> => {
-    const col = collection(db, 'hotels', hotelId, 'orders');
-    const newDoc = await addDoc(col, {
+    return insertRow('orders', {
       ...orderData,
+      hotelId,
       createdAt: orderData.createdAt || new Date().toISOString(),
     });
-    return newDoc.id;
   },
 
   addOrder: async (hotelId: string, orderData: any): Promise<string> => {
@@ -522,145 +286,76 @@ export const firestoreService = {
     status: ServiceRequest['status'],
     extra?: Partial<ServiceRequest>
   ): Promise<void> => {
-    const orderRef = doc(db, 'hotels', hotelId, 'orders', orderId);
-    await updateDoc(orderRef, {
-      status,
-      ...extra,
-      updatedAt: new Date().toISOString(),
-      ...(status === 'COMPLETED' || status === 'completed' ? { completedAt: new Date().toISOString() } : {}),
-    });
+    const payload: Record<string, unknown> = { status, ...(extra || {}) };
+    if (status === 'COMPLETED' || status === 'completed') {
+      payload.completedAt = new Date().toISOString();
+    }
+    await updateRow('orders', orderId, payload);
   },
 
   // ==========================================
-  // ROOM TYPES (Subcollection: hotels/{hotelId}/roomTypes)
+  // ROOM TYPES
   // ==========================================
-
   subscribeRoomTypes: (
     hotelId: string,
     onUpdate: (types: RoomTypeDefinition[]) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const col = collection(db, 'hotels', hotelId, 'roomTypes');
-    const q = query(col, orderBy('name', 'asc'));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const types: RoomTypeDefinition[] = snapshot.docs.map((d) => ({
-          id: d.id,
-          hotelId,
-          ...d.data(),
-        })) as RoomTypeDefinition[];
-        onUpdate(types);
-      },
-      (error) => {
-        console.error(`Error subscribing to roomTypes for hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+  ): Unsub =>
+    subscribeTable<RoomTypeDefinition>(
+      'room_types',
+      (rows) => onUpdate(rows.map((r) => ({ ...r, hotelId }))),
+      { hotelId, orderBy: { column: 'name', ascending: true } },
+      onError
+    ),
 
-  addRoomType: async (
-    hotelId: string,
-    data: Omit<RoomTypeDefinition, 'id' | 'hotelId'>
-  ): Promise<string> => {
-    const col = collection(db, 'hotels', hotelId, 'roomTypes');
-    const newDoc = await addDoc(col, { ...data, createdAt: new Date().toISOString() });
-    return newDoc.id;
-  },
+  addRoomType: (hotelId: string, data: Omit<RoomTypeDefinition, 'id' | 'hotelId'>) =>
+    insertRow('room_types', {
+      ...(data as object),
+      baseRate: (data as any).baseRate,
+      maxOccupancy: (data as any).maxOccupancy,
+      hotelId,
+    }),
 
-  updateRoomType: async (
-    hotelId: string,
-    roomTypeId: string,
-    data: Partial<RoomTypeDefinition>
-  ): Promise<void> => {
-    await updateDoc(doc(db, 'hotels', hotelId, 'roomTypes', roomTypeId), data);
-  },
+  updateRoomType: (hotelId: string, roomTypeId: string, data: Partial<RoomTypeDefinition>) =>
+    updateRow('room_types', roomTypeId, data as Record<string, unknown>),
 
   // ==========================================
-  // GUESTS (Subcollection: hotels/{hotelId}/guests)
-  // The booking contact — deliberately NOT the anonymous portal auth user.
+  // GUESTS
   // ==========================================
-
   subscribeGuests: (
     hotelId: string,
     onUpdate: (guests: Guest[]) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const col = collection(db, 'hotels', hotelId, 'guests');
-    const q = query(col, orderBy('name', 'asc'));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const guests: Guest[] = snapshot.docs.map((d) => ({
-          id: d.id,
-          hotelId,
-          ...d.data(),
-        })) as Guest[];
-        onUpdate(guests);
-      },
-      (error) => {
-        console.error(`Error subscribing to guests for hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+  ): Unsub =>
+    subscribeTable<Guest>(
+      'guests',
+      (rows) => onUpdate(rows.map((r) => ({ ...r, hotelId }))),
+      { hotelId, orderBy: { column: 'name', ascending: true } },
+      onError
+    ),
 
-  createGuest: async (
-    hotelId: string,
-    data: Omit<Guest, 'id' | 'hotelId'>
-  ): Promise<string> => {
-    const col = collection(db, 'hotels', hotelId, 'guests');
-    const newDoc = await addDoc(col, {
-      ...data,
-      createdAt: serverTimestamp(),
-    });
-    return newDoc.id;
-  },
+  createGuest: (hotelId: string, data: Omit<Guest, 'id' | 'hotelId'>) =>
+    insertRow('guests', { ...(data as object), hotelId }),
 
-  updateGuest: async (
-    hotelId: string,
-    guestId: string,
-    data: Partial<Guest>
-  ): Promise<void> => {
-    await updateDoc(doc(db, 'hotels', hotelId, 'guests', guestId), data);
-  },
+  updateGuest: (hotelId: string, guestId: string, data: Partial<Guest>) =>
+    updateRow('guests', guestId, data as Record<string, unknown>),
 
   // ==========================================
-  // BOOKINGS / RESERVATIONS (Subcollection: hotels/{hotelId}/bookings)
+  // BOOKINGS
   // ==========================================
-
   subscribeBookings: (
     hotelId: string,
     onUpdate: (bookings: Booking[]) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const col = collection(db, 'hotels', hotelId, 'bookings');
-    const q = query(col, orderBy('checkInDate', 'desc'));
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const bookings: Booking[] = snapshot.docs.map((d) => ({
-          id: d.id,
-          hotelId,
-          ...d.data(),
-        })) as Booking[];
-        onUpdate(bookings);
-      },
-      (error) => {
-        console.error(`Error subscribing to bookings for hotel ${hotelId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+  ): Unsub =>
+    subscribeTable<Booking>(
+      'bookings',
+      (rows) => onUpdate(rows.map((r) => ({ ...r, hotelId }))),
+      { hotelId, orderBy: { column: 'check_in_date', ascending: false } },
+      onError
+    ),
 
-  /**
-   * Availability for a stay window.
-   *
-   * Reads every roomNight in [checkInDate, checkOutDate) with a single range
-   * query on the date-only field (ISO dates sort lexicographically, so no
-   * composite index is needed) and subtracts those rooms from inventory.
-   * Rooms under maintenance are never offered.
-   */
+  /** Availability for a stay window — reads room_nights locks and rooms. */
   findAvailableRooms: async (
     hotelId: string,
     checkInDate: string,
@@ -669,28 +364,28 @@ export const firestoreService = {
     const stay = isValidStay(checkInDate, checkOutDate);
     if (!stay.ok) throw new BookingConflictError(stay.error, 'booking/invalid-stay');
 
-    const nightsQuery = query(
-      collection(db, 'hotels', hotelId, 'roomNights'),
-      where('date', '>=', checkInDate),
-      where('date', '<', checkOutDate)
-    );
-    const [nightSnap, roomSnap] = await Promise.all([
-      getDocs(nightsQuery),
-      getDocs(query(collection(db, 'hotels', hotelId, 'rooms'), orderBy('roomNumber', 'asc'))),
+    const [nightsRes, roomsRes] = await Promise.all([
+      supabase
+        .from('room_nights')
+        .select('room_id,date,booking_id')
+        .eq('hotel_id', hotelId)
+        .gte('date', checkInDate)
+        .lt('date', checkOutDate),
+      supabase.from('rooms').select('*').eq('hotel_id', hotelId).order('room_number', { ascending: true }),
     ]);
+    if (nightsRes.error) throw new Error(nightsRes.error.message);
+    if (roomsRes.error) throw new Error(roomsRes.error.message);
 
     const taken = new Map<string, { bookingId: string; dates: string[] }>();
-    nightSnap.docs.forEach((d) => {
-      const night = d.data() as RoomNight;
-      if (!night?.roomId) return;
-      const entry = taken.get(night.roomId) || { bookingId: night.bookingId, dates: [] };
-      if (night.date) entry.dates.push(night.date);
-      taken.set(night.roomId, entry);
+    (nightsRes.data || []).forEach((n: any) => {
+      const entry = taken.get(n.room_id) || { bookingId: n.booking_id, dates: [] };
+      entry.dates.push(n.date);
+      taken.set(n.room_id, entry);
     });
 
-    return roomSnap.docs
-      .map((d) => {
-        const room = { id: d.id, hotelId, ...d.data() } as Room;
+    const rooms = (roomsRes.data || []).map((r) => rowToObject<Room>(r) as Room);
+    return rooms
+      .map((room) => {
         const conflict = taken.get(room.id);
         const outOfService = room.status === 'maintenance';
         return {
@@ -705,23 +400,14 @@ export const firestoreService = {
   },
 
   /**
-   * Creates a booking, its room-night locks, and its folio — atomically.
-   *
-   * The roomNights read is the double-booking check: the existence of a
-   * `roomNights/{roomId}_{date}` document means that room is taken that night.
-   * All reads happen before any write (Firestore transaction requirement), and
-   * a conflict throws BookingConflictError so nothing at all is written.
+   * Creates a booking + room-night locks + folio atomically via the
+   * create_booking() RPC (double-booking safe; SECURITY DEFINER, staff only).
    */
-  createBooking: async (
-    hotelId: string,
-    input: CreateBookingInput
-  ): Promise<string> => {
-    const { guestId, roomId, roomTypeId, checkInDate, checkOutDate, agreedRate, numGuests, source } =
-      input;
+  createBooking: async (hotelId: string, input: CreateBookingInput): Promise<string> => {
+    const { guestId, roomId, roomTypeId, checkInDate, checkOutDate, agreedRate, numGuests, source } = input;
 
     const stay = isValidStay(checkInDate, checkOutDate);
     if (!stay.ok) throw new BookingConflictError(stay.error, 'booking/invalid-stay');
-
     const nights = enumerateNights(checkInDate, checkOutDate);
     if (nights.length === 0) {
       throw new BookingConflictError('A booking must cover at least one night.', 'booking/invalid-stay');
@@ -730,222 +416,165 @@ export const firestoreService = {
       throw new BookingConflictError('Agreed rate must be a positive number.', 'booking/invalid-rate');
     }
 
-    const bookingRef = doc(collection(db, 'hotels', hotelId, 'bookings'));
-    const folioRef = doc(db, 'hotels', hotelId, 'folios', bookingRef.id);
-    const nightRefs = nights.map((date) => doc(db, 'hotels', hotelId, 'roomNights', roomNightId(roomId, date)));
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { data, error } = await supabase.rpc('create_booking', {
+      p_hotel_id: hotelId,
+      p_guest_id: guestId,
+      p_room_id: roomId,
+      p_room_type_id: roomTypeId,
+      p_check_in: checkInDate,
+      p_check_out: checkOutDate,
+      p_rate: agreedRate,
+      p_num_guests: numGuests,
+      p_source: source,
+      p_created_by: user?.id || 'unknown',
+    });
 
-    await runTransaction(db, async (tx) => {
-      // 1. Reads first.
-      const nightSnaps = await Promise.all(nightRefs.map((ref) => tx.get(ref)));
-      const conflicts = nightSnaps
-        .map((snap, i) => (snap.exists() ? nights[i] : null))
-        .filter((d): d is string => d !== null);
-
-      if (conflicts.length > 0) {
-        const first = nightSnaps.find((s) => s.exists());
-        const holder = first?.data() as RoomNight | undefined;
+    if (error) {
+      if (error.message.includes('booking/room-not-available')) {
+        // Fetch the conflicting nights for a precise message.
+        const { data: conflictNights } = await supabase
+          .from('room_nights')
+          .select('date')
+          .eq('room_id', roomId)
+          .gte('date', checkInDate)
+          .lt('date', checkOutDate);
+        const dates = (conflictNights || []).map((n: any) => n.date).sort();
         throw new BookingConflictError(
-          `Room is already booked for ${conflicts.length} of the requested night(s)` +
-            ` (${conflicts.slice(0, 3).join(', ')}${conflicts.length > 3 ? '…' : ''}). Choose another room or dates.`,
+          `Room is already booked for ${dates.length} of the requested night(s)` +
+            ` (${dates.slice(0, 3).join(', ')}${dates.length > 3 ? '…' : ''}). Choose another room or dates.`,
           'booking/room-not-available',
-          conflicts
+          dates
         );
       }
-
-      // 2. Writes.
-      tx.set(bookingRef, {
-        guestId,
-        roomId,
-        roomTypeId,
-        checkInDate,
-        checkOutDate,
-        actualCheckInAt: null,
-        actualCheckOutAt: null,
-        status: 'RESERVED' as BookingStatus,
-        agreedRate,
-        numGuests,
-        source,
-        createdBy: auth.currentUser?.uid || 'unknown',
-        createdAt: serverTimestamp(),
-      });
-
-      nights.forEach((date, i) => {
-        tx.set(nightRefs[i], {
-          roomId,
-          date,
-          bookingId: bookingRef.id,
-        });
-      });
-
-      // One folio per booking, same document id — OPEN with a zero balance.
-      // Room-night charges are raised by night audit / checkout (not yet built).
-      tx.set(folioRef, {
-        bookingId: bookingRef.id,
-        status: 'OPEN',
-        balance: 0,
-      });
-    });
-
-    return bookingRef.id;
+      if (error.message.includes('booking/')) {
+        throw new BookingConflictError(error.message, error.message.split(' ')[0]);
+      }
+      throw new Error(error.message);
+    }
+    return data as string;
   },
 
-  /**
-   * Front-desk check-in. Operates on the BOOKING, not the room document: the
-   * stay data lives on the booking, and the room only carries its physical
-   * status.
-   */
   checkInGuest: async (hotelId: string, bookingId: string, roomId: string): Promise<void> => {
-    const batch = writeBatch(db);
-    batch.update(doc(db, 'hotels', hotelId, 'bookings', bookingId), {
-      status: 'CHECKED_IN' as BookingStatus,
-      actualCheckInAt: serverTimestamp(),
-      actualCheckOutAt: null,
-    });
-    batch.update(doc(db, 'hotels', hotelId, 'rooms', roomId), { status: 'occupied' });
-    await batch.commit();
+    const now = new Date().toISOString();
+    const { error: bErr } = await supabase
+      .from('bookings')
+      .update({ status: 'CHECKED_IN' as BookingStatus, actual_check_in_at: now, actual_check_out_at: null })
+      .eq('id', bookingId)
+      .eq('hotel_id', hotelId);
+    if (bErr) throw new Error(bErr.message);
+    const { error: rErr } = await supabase
+      .from('rooms')
+      .update({ status: 'occupied' })
+      .eq('id', roomId)
+      .eq('hotel_id', hotelId);
+    if (rErr) throw new Error(rErr.message);
   },
 
-  /**
-   * Front-desk check-out. The room goes to `cleaning`, NOT `available` —
-   * housekeeping clears it from there (HousekeepingTab room-status board).
-   */
   checkOutGuest: async (hotelId: string, bookingId: string, roomId: string): Promise<void> => {
-    const batch = writeBatch(db);
-    batch.update(doc(db, 'hotels', hotelId, 'bookings', bookingId), {
-      status: 'CHECKED_OUT' as BookingStatus,
-      actualCheckOutAt: serverTimestamp(),
-    });
-    batch.update(doc(db, 'hotels', hotelId, 'rooms', roomId), { status: 'cleaning' });
-    await batch.commit();
+    const now = new Date().toISOString();
+    await supabase
+      .from('bookings')
+      .update({ status: 'CHECKED_OUT' as BookingStatus, actual_check_out_at: now })
+      .eq('id', bookingId)
+      .eq('hotel_id', hotelId);
+    // Room goes to cleaning — housekeeping clears it (matches Firestore behaviour).
+    await supabase.from('rooms').update({ status: 'cleaning' }).eq('id', roomId).eq('hotel_id', hotelId);
   },
 
-  /** Releases the room-night locks so the room can be resold. */
+  /** Releases room-night locks so the room can be resold. */
   cancelBooking: async (hotelId: string, bookingId: string): Promise<void> => {
-    const bookingRef = doc(db, 'hotels', hotelId, 'bookings', bookingId);
-    await runTransaction(db, async (tx) => {
-      const snap = await tx.get(bookingRef);
-      if (!snap.exists()) throw new Error('Booking not found.');
-      const booking = { id: snap.id, ...snap.data() } as Booking;
-      if (booking.status === 'CANCELLED' || booking.status === 'CHECKED_OUT') return;
+    const booking = await fetchRow<Booking>('bookings', bookingId);
+    if (!booking) throw new Error('Booking not found.');
+    if (booking.status === 'CANCELLED' || booking.status === 'CHECKED_OUT') return;
 
-      for (const date of enumerateNights(booking.checkInDate, booking.checkOutDate)) {
-        tx.delete(doc(db, 'hotels', hotelId, 'roomNights', roomNightId(booking.roomId, date)));
-      }
-      tx.update(bookingRef, { status: 'CANCELLED' as BookingStatus });
-      if (booking.status === 'CHECKED_IN') {
-        tx.update(doc(db, 'hotels', hotelId, 'rooms', booking.roomId), { status: 'cleaning' });
-      }
-    });
+    const wasCheckedIn = booking.status === 'CHECKED_IN';
+    const nights = enumerateNights(booking.checkInDate, booking.checkOutDate);
+
+    // Delete locks, then update booking, then set room to cleaning if it was in-house.
+    for (const date of nights) {
+      await supabase.from('room_nights').delete().eq('room_id', booking.roomId).eq('date', date);
+    }
+    await supabase
+      .from('bookings')
+      .update({ status: 'CANCELLED' as BookingStatus })
+      .eq('id', bookingId)
+      .eq('hotel_id', hotelId);
+    if (wasCheckedIn) {
+      await supabase.from('rooms').update({ status: 'cleaning' }).eq('id', booking.roomId);
+    }
   },
 
   markNoShow: async (hotelId: string, bookingId: string): Promise<void> => {
-    const bookingRef = doc(db, 'hotels', hotelId, 'bookings', bookingId);
-    await runTransaction(db, async (tx) => {
-      const snap = await tx.get(bookingRef);
-      if (!snap.exists()) throw new Error('Booking not found.');
-      const booking = { id: snap.id, ...snap.data() } as Booking;
-      if (booking.status !== 'RESERVED') return;
-      for (const date of enumerateNights(booking.checkInDate, booking.checkOutDate)) {
-        tx.delete(doc(db, 'hotels', hotelId, 'roomNights', roomNightId(booking.roomId, date)));
-      }
-      tx.update(bookingRef, { status: 'NO_SHOW' as BookingStatus });
-    });
+    const booking = await fetchRow<Booking>('bookings', bookingId);
+    if (!booking) throw new Error('Booking not found.');
+    if (booking.status !== 'RESERVED') return;
+    for (const date of enumerateNights(booking.checkInDate, booking.checkOutDate)) {
+      await supabase.from('room_nights').delete().eq('room_id', booking.roomId).eq('date', date);
+    }
+    await supabase
+      .from('bookings')
+      .update({ status: 'NO_SHOW' as BookingStatus })
+      .eq('id', bookingId)
+      .eq('hotel_id', hotelId);
   },
 
   // ==========================================
-  // FOLIOS (hotels/{hotelId}/folios/{bookingId})
-  // Staff-only: guests never read or write folios directly.
+  // FOLIOS
   // ==========================================
-
   subscribeFolio: (
     hotelId: string,
     bookingId: string,
     onUpdate: (folio: Folio | null) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    return onSnapshot(
-      doc(db, 'hotels', hotelId, 'folios', bookingId),
-      (snap) => {
-        if (snap.exists()) {
-          onUpdate({ id: snap.id, ...snap.data() } as Folio);
-        } else {
-          onUpdate(null);
-        }
-      },
-      (error) => {
-        console.error(`Error subscribing to folio for booking ${bookingId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+  ): Unsub => subscribeRow<Folio>('folios', bookingId, onUpdate, onError),
 
-  getFolio: async (hotelId: string, bookingId: string): Promise<Folio | null> => {
-    const snap = await getDoc(doc(db, 'hotels', hotelId, 'folios', bookingId));
-    return snap.exists() ? ({ id: snap.id, ...snap.data() } as Folio) : null;
-  },
+  getFolio: (hotelId: string, bookingId: string) => fetchRow<Folio>('folios', bookingId) as Promise<Folio | null>,
 
   subscribeCharges: (
     hotelId: string,
     bookingId: string,
     onUpdate: (charges: Charge[]) => void,
     onError?: (err: Error) => void
-  ): Unsubscribe => {
-    const q = query(
-      collection(db, 'hotels', hotelId, 'folios', bookingId, 'charges'),
-      orderBy('createdAt', 'desc')
-    );
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const charges: Charge[] = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        })) as Charge[];
-        onUpdate(charges);
+  ): Unsub =>
+    subscribeTable<Charge>(
+      'charges',
+      onUpdate,
+      {
+        hotelId,
+        filters: [{ column: 'folio_id', value: bookingId }],
+        orderBy: { column: 'created_at', ascending: false },
       },
-      (error) => {
-        console.error(`Error subscribing to charges for booking ${bookingId}:`, error);
-        if (onError) onError(error);
-      }
-    );
-  },
+      onError
+    ),
 
   /**
-   * Links an order to its booking's folio as a charge.
-   *
-   * The guest has no Firestore access to folios (by design — see the rules),
-   * so the write is performed by the server with the Admin SDK. Failure here
-   * must never break the guest's order, so callers should treat the result as
-   * advisory.
+   * Links an order to its booking's folio. Guests can't write folios (RLS), so
+   * the request goes through the Express server, which calls the
+   * post_guest_order_charge() RPC. Advisory — failures never block the order.
    */
-  linkOrderCharge: async (
-    orderId: string
-  ): Promise<{ linked: boolean; reason?: string }> => {
-    const currentUser = auth.currentUser;
-    if (!currentUser) return { linked: false, reason: 'no-session' };
+  linkOrderCharge: async (orderId: string): Promise<{ linked: boolean; reason?: string }> => {
+    const { data: session } = await supabase.auth.getSession();
+    if (!session?.session?.access_token) return { linked: false, reason: 'no-session' };
 
     try {
-      const idToken = await currentUser.getIdToken();
       const response = await fetch(`/api/guest/orders/${encodeURIComponent(orderId)}/charge`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${idToken}` },
+        headers: { Authorization: `Bearer ${session.session.access_token}` },
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        return { linked: false, reason: data?.code || `http-${response.status}` };
-      }
+      if (!response.ok) return { linked: false, reason: data?.code || `http-${response.status}` };
       return { linked: !!data.linked, reason: data.reason };
     } catch (err: any) {
       return { linked: false, reason: err?.message || 'network-error' };
     }
   },
 
-  /** Nights in a stay — re-exported for UI use (stay total on the folio). */
   nightsBetween,
 
-  // Server API calls helper (with Super Admin ID token)
-  // Free-tier fallback: uses the Firebase Admin SDK server endpoint,
-  // which sets custom claims AND writes the users/{uid} role document.
+  // ---- Server admin calls (super admin) -----------------------------------
   createHotelUserAuth: async (
     hotelId: string,
     hotelName: string,
@@ -954,55 +583,41 @@ export const firestoreService = {
     name?: string,
     phone?: string
   ) => {
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
+    const { data: session } = await supabase.auth.getSession();
+    if (!session?.session?.access_token) {
       throw new Error('Not authenticated. Please sign in as Super Admin.');
     }
-
-    const idToken = await currentUser.getIdToken(true);
     const response = await fetch('/api/admin/create-hotel-user', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
+        Authorization: `Bearer ${session.session.access_token}`,
       },
-      body: JSON.stringify({
-        hotelId,
-        hotelName,
-        email,
-        password,
-        name,
-        phone,
-      }),
+      body: JSON.stringify({ hotelId, hotelName, email, password, name, phone }),
     });
-
     const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || data.details || 'Failed to create hotel admin user via Admin SDK');
-    }
+    if (!response.ok) throw new Error(data.error || data.details || 'Failed to create hotel admin user');
     return data;
   },
 
   deleteHotelUserAuth: async (email: string) => {
-    const currentUser = auth.currentUser;
-    if (!currentUser) return;
-    const idToken = await currentUser.getIdToken();
+    const { data: session } = await supabase.auth.getSession();
+    if (!session?.session?.access_token) return;
     await fetch('/api/admin/delete-hotel-user', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
+        Authorization: `Bearer ${session.session.access_token}`,
       },
       body: JSON.stringify({ email }),
     });
   },
 
-  /**
-   * Emails a password reset link to a hotel admin account. Works on the free
-   * plan (no Cloud Functions needed) — the raw password is never known to the
-   * app; only Firebase Auth can reset it.
-   */
+  /** Emails a password reset link (Supabase Auth; the raw password is never stored). */
   sendHotelPasswordReset: async (email: string) => {
-    await sendPasswordResetEmail(auth, email.trim());
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/`,
+    });
+    if (error) throw new Error(error.message);
   },
 };

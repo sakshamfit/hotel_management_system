@@ -1,5 +1,3 @@
-import type { Timestamp } from 'firebase/firestore';
-
 export type UserRole =
   | 'super_admin'
   | 'hotel_admin'
@@ -172,7 +170,7 @@ export interface Guest {
   email?: string;
   idProofType?: string;
   idProofNumber?: string;
-  createdAt?: Timestamp | string;
+  createdAt?: string;
 }
 
 export type BookingStatus = 'RESERVED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'CANCELLED' | 'NO_SHOW';
@@ -188,15 +186,15 @@ export interface Booking {
   /** Date-only "YYYY-MM-DD". The stay covers [checkInDate, checkOutDate). */
   checkInDate: string;
   checkOutDate: string;
-  actualCheckInAt?: Timestamp | string | null;
-  actualCheckOutAt?: Timestamp | string | null;
+  actualCheckInAt?: string | null;
+  actualCheckOutAt?: string | null;
   status: BookingStatus;
   /** Snapshot at booking time — later roomType rate changes must not move it. */
   agreedRate: number;
   numGuests: number;
   source: BookingSource;
   createdBy: string; // staff uid
-  createdAt?: Timestamp | string;
+  createdAt?: string;
 
   // ---- joined at read time (never stored) ----
   guestName?: string;
@@ -235,7 +233,7 @@ export interface Charge {
   description: string;
   amount: number;
   sourceOrderId?: string; // links back to the existing orders collection
-  createdAt?: Timestamp | string;
+  createdAt?: string;
 }
 
 export type PaymentMethod = 'cash' | 'card' | 'upi';
@@ -246,7 +244,7 @@ export interface Payment {
   amount: number;
   method: PaymentMethod;
   receivedBy: string;
-  receivedAt?: Timestamp | string;
+  receivedAt?: string;
 }
 
 /** Input for createBooking — everything the front desk supplies. */

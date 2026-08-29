@@ -143,7 +143,7 @@ export const SuperAdminDashboard: React.FC = () => {
                   Hotel Tenants Management
                 </h1>
                 <span className="bg-teal-tint text-teal-deep border border-teal-line font-mono text-[10px] uppercase px-2 py-0.5 rounded font-semibold">
-                  Firestore Connected
+                  Supabase Connected
                 </span>
               </div>
               <p className="t-caption text-ink-mute mt-1">
@@ -181,7 +181,7 @@ export const SuperAdminDashboard: React.FC = () => {
               <ShieldCheck className="w-4 h-4 text-[#155555]" />
             </div>
             <div className="text-2xl font-bold text-[#292827] mt-2 font-mono">Enforced</div>
-            <div className="text-[11px] text-[#73706d] mt-1">Firestore Rules & Claims</div>
+            <div className="text-[11px] text-[#73706d] mt-1">Row Level Security</div>
           </div>
 
           <div className="bg-white border border-[#e8e4dd] p-5 rounded-xl shadow-xs">
@@ -189,7 +189,7 @@ export const SuperAdminDashboard: React.FC = () => {
               <span className="text-xs text-[#73706d] font-medium">Data Storage</span>
               <Layers className="w-4 h-4 text-[#1b1938]" />
             </div>
-            <div className="text-2xl font-bold text-[#292827] mt-2 font-mono">Firestore</div>
+            <div className="text-2xl font-bold text-[#292827] mt-2 font-mono">Postgres</div>
             <div className="text-[11px] text-[#73706d] mt-1">hotels/{'{hotelId}'} subcollections</div>
           </div>
 
@@ -198,7 +198,7 @@ export const SuperAdminDashboard: React.FC = () => {
               <span className="text-xs text-[#73706d] font-medium">Auth Provider</span>
               <Globe2 className="w-4 h-4 text-[#155555]" />
             </div>
-            <div className="text-2xl font-bold text-[#292827] mt-2 font-mono">Firebase Auth</div>
+            <div className="text-2xl font-bold text-[#292827] mt-2 font-mono">Supabase Auth</div>
             <div className="text-[11px] text-[#73706d] mt-1">Admin SDK Custom Claims</div>
           </div>
         </div>

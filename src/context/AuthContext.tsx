@@ -1,13 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import {
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  GoogleAuthProvider,
-  signOut,
-  onAuthStateChanged,
-  User as FirebaseUser,
-} from 'firebase/auth';
-import { auth } from '../firebase/config';
+import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
+import { supabase } from '../supabase/config';
 import { firestoreService } from '../services/firestoreService';
 import { ensureGuestSession, clearGuestSessionCache, GuestSessionError } from '../services/guestSession';
 import type { GuestSessionInfo } from '../services/guestSession';
@@ -15,12 +8,9 @@ import { User, Hotel, UserRole } from '../types';
 
 interface AuthContextType {
   user: User | null;
-  firebaseUser: FirebaseUser | null;
+  /** The raw Supabase session/user (kept under the old name for compatibility). */
+  firebaseUser: SupabaseUser | null;
   hotel: Hotel | null;
-  /**
-   * Room-scoped session for an anonymous guest (present only when the guest
-   * portal is open and no staff member is signed in). Null for staff.
-   */
   guestSession: GuestSessionInfo | null;
   guestSessionError: string | null;
   activeExperience: 'super_admin' | 'hotel_os' | 'guest_experience' | 'login';
@@ -41,7 +31,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [firebaseUser, setFirebaseUser] = useState<SupabaseUser | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [hotel, setHotel] = useState<Hotel | null>(null);
   const [activeExperience, setActiveExperience] = useState<'super_admin' | 'hotel_os' | 'guest_experience' | 'login'>('login');
@@ -52,7 +42,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [guestSession, setGuestSession] = useState<GuestSessionInfo | null>(null);
   const [guestSessionError, setGuestSessionError] = useState<string | null>(null);
 
-  // Check URL token for Guest Room QR scan
+  // Check URL token for Guest Room QR scan.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
@@ -62,38 +52,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Process role/claims from Firebase User.
-  // PRIMARY: read role + hotelId from the Firestore users/{uid} document (free-tier approach).
-  // FALLBACK: custom claims on the ID token (kept so existing Admin SDK users still work).
-  const processUserClaims = useCallback(async (fbUser: FirebaseUser, forceRefresh = true) => {
+  const signOutClient = useCallback(async () => {
     try {
-      // Force token refresh to ensure custom claims are fetched (fallback source)
-      let tokenResult = await fbUser.getIdTokenResult(forceRefresh);
-      const claimRole = tokenResult.claims.role as string | undefined;
-      const claimHotelId = tokenResult.claims.hotelId as string | undefined;
+      await supabase.auth.signOut();
+    } catch {
+      /* ignore */
+    }
+    setUser(null);
+    setHotel(null);
+    setSelectedTenantIdState(null);
+  }, []);
 
-      // Guests are anonymous users carrying a server-issued { role: 'guest',
-      // hotelId, roomId, roomNumber } claim. They hold no users/{uid} role
-      // document, so they must never fall through to the staff path (which
-      // would sign them straight back out).
-      if (fbUser.isAnonymous || claimRole === 'guest') {
-        // An anonymous session with no room token has nothing it may access.
-        if (!new URLSearchParams(window.location.search).get('token')) {
-          await signOut(auth);
-          setUser(null);
-          setHotel(null);
-          setSelectedTenantIdState(null);
+  // Resolve a signed-in auth user into an app User (staff) or guest.
+  const processUserClaims = useCallback(
+    async (sbUser: SupabaseUser, session: Session | null) => {
+      const isAnon = (sbUser as any).is_anonymous === true;
+      const urlHasToken = !!new URLSearchParams(window.location.search).get('token');
+
+      if (isAnon) {
+        // Anonymous visitors only get access once a room session is established.
+        if (!urlHasToken) {
+          await signOutClient();
+          setGuestSession(null);
           setActiveExperience('login');
           return;
         }
         setUser({
-          id: fbUser.uid,
-          hotelId: claimHotelId || null,
+          id: sbUser.id,
+          hotelId: null,
           name: 'In-Room Guest',
           email: '',
           phone: '',
           role: 'guest' as UserRole,
-          token: tokenResult.token,
+          token: session?.access_token || '',
         });
         setHotel(null);
         setSelectedTenantIdState(null);
@@ -101,44 +92,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // PRIMARY: read role + hotelId from the Firestore users/{uid} document.
-      const docUser = await firestoreService.fetchUserRole(fbUser.uid);
-      let role = (docUser?.role as string | undefined) || claimRole;
-      let hotelId = docUser?.hotelId || claimHotelId;
+      // Staff: read role + hotelId from the profiles table.
+      const roleDoc = await firestoreService.fetchUserRole(sbUser.id);
+      const role = roleDoc?.role;
+      const hotelId = roleDoc?.hotelId;
 
-      // Handle edge case: freshly created user whose role hasn't propagated yet
-      if (!role) {
-        await new Promise((r) => setTimeout(r, 600));
-        tokenResult = await fbUser.getIdTokenResult(true);
-        role = (docUser?.role as string | undefined) || (tokenResult.claims.role as string | undefined);
-        hotelId = docUser?.hotelId || (tokenResult.claims.hotelId as string | undefined);
-      }
-
-      // A valid role MUST come from the Firestore users/{uid} doc or the ID token.
-      // No other email fallbacks. Users without a role are signed out.
       if (role !== 'super_admin' && role !== 'hotel_admin') {
-        console.warn(`User ${fbUser.uid} (${fbUser.email}) has no provisioned role. Signing out.`);
-        await signOut(auth);
-        setUser(null);
-        setHotel(null);
-        setSelectedTenantIdState(null);
+        console.warn(`User ${sbUser.id} (${sbUser.email}) has no provisioned role. Signing out.`);
+        await signOutClient();
         setActiveExperience('login');
         return;
       }
 
-      const normalizedRole: UserRole = (role === 'super_admin' ? 'super_admin' : 'hotel_admin');
+      const normalizedRole: UserRole = role === 'super_admin' ? 'super_admin' : 'hotel_admin';
 
-      const appUser: User = {
-        id: fbUser.uid,
+      setUser({
+        id: sbUser.id,
         hotelId: hotelId || null,
-        name: fbUser.displayName || (normalizedRole === 'super_admin' ? 'Super Admin' : 'Hotel Admin'),
-        email: fbUser.email || '',
-        phone: fbUser.phoneNumber || '',
+        name: sbUser.user_metadata?.display_name || (normalizedRole === 'super_admin' ? 'Super Admin' : 'Hotel Admin'),
+        email: sbUser.email || '',
+        phone: (sbUser.user_metadata?.phone as string) || '',
         role: normalizedRole,
-        token: tokenResult.token,
-      };
-
-      setUser(appUser);
+        token: session?.access_token || '',
+      });
 
       if (normalizedRole === 'super_admin') {
         setActiveExperience('super_admin');
@@ -148,53 +124,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const hotelDoc = await firestoreService.getHotel(hotelId);
         setHotel(hotelDoc);
       } else {
-        // hotel_admin without an assigned hotel has no valid tenant — reject access
-        console.warn(`Hotel admin ${fbUser.uid} has no hotelId. Signing out.`);
-        await signOut(auth);
-        setUser(null);
-        setHotel(null);
-        setSelectedTenantIdState(null);
+        console.warn(`Hotel admin ${sbUser.id} has no hotelId. Signing out.`);
+        await signOutClient();
         setActiveExperience('login');
-        return;
       }
-    } catch (err) {
-      console.error('Error processing Firebase user claims:', err);
-    }
-  }, []);
+    },
+    [signOutClient]
+  );
 
-  // Subscribe to Firebase Auth state
+  // Subscribe to Supabase auth state.
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
-      setIsLoading(true);
-      setFirebaseUser(fbUser);
-
-      if (fbUser) {
-        await processUserClaims(fbUser, true);
-      } else {
-        setUser(null);
-        setHotel(null);
-        setSelectedTenantIdState(null);
-        setGuestSession(null);
-        clearGuestSessionCache();
-        const params = new URLSearchParams(window.location.search);
-        if (!params.get('token')) {
-          setActiveExperience('login');
+    let mounted = true;
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        if (!mounted) return;
+        setIsLoading(true);
+        setFirebaseUser(session?.user ?? null);
+        if (session?.user) {
+          processUserClaims(session.user, session).finally(() => mounted && setIsLoading(false));
+        } else {
+          setUser(null);
+          setHotel(null);
+          setSelectedTenantIdState(null);
+          setGuestSession(null);
+          clearGuestSessionCache();
+          if (!new URLSearchParams(window.location.search).get('token')) setActiveExperience('login');
+          setIsLoading(false);
         }
-      }
-      setIsLoading(false);
+      });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setFirebaseUser(session?.user ?? null);
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
   }, [processUserClaims]);
 
   // Guest portal: exchange the scanned room token for a room-scoped session.
-  // Only runs for anonymous visitors — a signed-in staff member previewing the
-  // portal keeps their own (higher-privilege) session untouched, so their
-  // super_admin / hotel_admin claims are never overwritten with guest claims.
   useEffect(() => {
     if (!guestRoomToken) return;
-    // Wait for auth state to settle before deciding whether this is a guest.
-    if (firebaseUser && !firebaseUser.isAnonymous) {
+    if (firebaseUser && (firebaseUser as any).is_anonymous !== true) {
+      // A signed-in staff member previewing keeps their own session.
       setGuestSession(null);
       setGuestSessionError(null);
       return;
@@ -218,12 +192,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       cancelled = true;
     };
-  }, [guestRoomToken, firebaseUser?.uid, firebaseUser?.isAnonymous]);
+  }, [guestRoomToken, firebaseUser?.id, (firebaseUser as any)?.is_anonymous]);
 
-  // Subscribe to real-time hotels collection when user is Super Admin
+  // Super admin: live list of all hotels.
   useEffect(() => {
     if (user?.role === 'super_admin') {
-      const unsubscribeHotels = firestoreService.subscribeHotels(
+      const unsub = firestoreService.subscribeHotels(
         (hotelsList) => {
           setAllHotels(hotelsList);
           if (selectedTenantId) {
@@ -233,29 +207,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         },
         (err) => console.error('Error listening to hotels:', err)
       );
-      return () => unsubscribeHotels();
+      return () => unsub();
     }
   }, [user?.role, selectedTenantId]);
 
-  // Subscribe to single hotel document when hotel_admin is logged in
+  // Hotel admin: live single hotel document.
   useEffect(() => {
     if (user?.role === 'hotel_admin' && user.hotelId) {
-      const unsubscribeHotel = firestoreService.subscribeHotel(
+      const unsub = firestoreService.subscribeHotel(
         user.hotelId,
-        (hotelDoc) => {
-          setHotel(hotelDoc);
-        },
+        (hotelDoc) => setHotel(hotelDoc),
         (err) => console.error('Error listening to hotel doc:', err)
       );
-      return () => unsubscribeHotel();
+      return () => unsub();
     }
   }, [user?.role, user?.hotelId]);
 
   const loginWithCredentials = async (email: string, pass: string) => {
     setIsLoading(true);
     try {
-      const cred = await signInWithEmailAndPassword(auth, email.trim(), pass.trim());
-      await processUserClaims(cred.user, true);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: pass.trim(),
+      });
+      if (error) throw error;
+      if (data.user && data.session) await processUserClaims(data.user, data.session);
     } finally {
       setIsLoading(false);
     }
@@ -264,18 +240,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = async () => {
     setIsLoading(true);
     try {
-      const provider = new GoogleAuthProvider();
-      const cred = await signInWithPopup(auth, provider);
-      await processUserClaims(cred.user, true);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: `${window.location.origin}/` },
+      });
+      if (error) throw error;
     } finally {
       setIsLoading(false);
     }
   };
 
   const refreshClaims = async () => {
-    if (auth.currentUser) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
       setIsLoading(true);
-      await processUserClaims(auth.currentUser, true);
+      await processUserClaims(session.user, session);
       setIsLoading(false);
     }
   };
@@ -304,21 +283,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } else {
       setHotel(null);
-      if (user?.role === 'super_admin') {
-        setActiveExperience('super_admin');
-      }
+      if (user?.role === 'super_admin') setActiveExperience('super_admin');
     }
   };
 
   const logout = async () => {
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.warn('Sign out error:', e);
-    }
-    setUser(null);
-    setHotel(null);
-    setSelectedTenantIdState(null);
+    await signOutClient();
     setGuestSession(null);
     clearGuestSessionCache();
     setActiveExperience('login');
@@ -354,8 +324,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };

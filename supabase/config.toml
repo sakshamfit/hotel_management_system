@@ -1,0 +1,28 @@
+# Supabase CLI config. Used for `supabase start` (local) / `supabase db push`.
+# Project settings for the cloud project live in the Supabase dashboard.
+project_id = "nexora-hotel-os"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+# Anonymous guests sign in with the anonymous provider; staff use email/password.
+enable_signup = true
+[auth.email]
+enable_signup = false          # staff accounts are provisioned by the super admin
+enable_confirmations = true
+[auth.anonymous]
+enable_signup = true           # required for QR guest sessions

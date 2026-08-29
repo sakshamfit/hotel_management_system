@@ -172,7 +172,7 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
       {loading ? (
         <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center">
           <div className="w-8 h-8 border-2 border-[#1b1938] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-[#73706d] mt-3">Loading hotel rooms from Firestore...</p>
+          <p className="text-xs text-[#73706d] mt-3">Loading hotel rooms…</p>
         </div>
       ) : rooms.length === 0 ? (
         <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center space-y-4 shadow-xs">
@@ -362,7 +362,7 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
                   disabled={isSubmitting}
                   className="px-5 py-2 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-xs font-bold text-white shadow-sm disabled:opacity-50"
                 >
-                  {isSubmitting ? 'Saving to Firestore...' : 'Create Rooms'}
+                  {isSubmitting ? 'Saving…' : 'Create Rooms'}
                 </button>
               </div>
             </form>
