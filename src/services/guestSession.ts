@@ -24,6 +24,13 @@ import type { GuestClaims } from '../types';
 export interface GuestSessionInfo extends GuestClaims {
   /** Anonymous Firebase Auth uid — also stamped onto every order the guest creates. */
   uid: string;
+  /**
+   * Display name of the in-house guest, resolved server-side from the active
+   * booking. Guests cannot read bookings or the guests collection themselves,
+   * so the server hands the name over in the claim. Empty when no one is
+   * checked in.
+   */
+  guestName?: string;
 }
 
 export class GuestSessionError extends Error {
@@ -65,6 +72,7 @@ async function exchangeRoomToken(roomToken: string): Promise<GuestClaims> {
     hotelId: data.hotelId,
     roomId: data.roomId,
     roomNumber: data.roomNumber,
+    guestName: typeof data.guestName === 'string' ? data.guestName : '',
   };
 }
 

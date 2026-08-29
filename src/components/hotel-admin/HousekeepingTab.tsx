@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { firestoreService } from '../../services/firestoreService';
-import { Hotel } from '../../types';
+import { Hotel, Room } from '../../types';
 import {
   BedDouble,
   CheckCircle2,
   Clock,
   Search,
+  Sparkles,
+  Wrench,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface Props {
@@ -14,8 +17,18 @@ interface Props {
 
 export const HousekeepingTab: React.FC<Props> = ({ hotel }) => {
   const [tasks, setTasks] = useState<any[]>([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    const unsubscribeRooms = firestoreService.subscribeRooms(
+      hotel.id,
+      (r) => setRooms(r),
+      (err) => console.error('Failed to listen to rooms:', err)
+    );
+    return () => unsubscribeRooms();
+  }, [hotel.id]);
 
   useEffect(() => {
     setLoading(true);
@@ -48,6 +61,24 @@ export const HousekeepingTab: React.FC<Props> = ({ hotel }) => {
       alert(`Error updating task: ${err.message}`);
     }
   };
+
+  /**
+   * Rooms are physical state only; the STAY lives on the booking. Check-out
+   * moves a room to `cleaning`, and housekeeping is the step that clears it
+   * back to `available` — without this the room would never return to the
+   * front desk's sellable inventory.
+   */
+  const handleSetRoomStatus = async (room: Room, status: Room['status']) => {
+    try {
+      await firestoreService.updateRoom(hotel.id, room.id, { status });
+    } catch (err: any) {
+      alert(`Error updating room ${room.roomNumber}: ${err.message}`);
+    }
+  };
+
+  const cleaningRooms = rooms.filter((r) => r.status === 'cleaning');
+  const maintenanceRooms = rooms.filter((r) => r.status === 'maintenance');
+  const readyRooms = rooms.filter((r) => r.status === 'available');
 
   const activeTasks = tasks.filter((r) => !['COMPLETED', 'DELIVERED', 'CANCELLED'].includes((r.status || '').toUpperCase()));
   const completedTasks = tasks.filter((r) => ['COMPLETED', 'DELIVERED'].includes((r.status || '').toUpperCase()));
@@ -85,7 +116,59 @@ export const HousekeepingTab: React.FC<Props> = ({ hotel }) => {
         </div>
       </div>
 
-      {/* Task Summary Badges */}
+      {/* Room Status Board — closes the check-out → cleaning → available loop */}
+      <div className="bg-white border border-[#e8e4dd] p-6 rounded-xl shadow-xs space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-[#ece6fb] border border-[#c9b4fa] flex items-center justify-center text-[#1b1938]">
+            <Sparkles className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-[#292827]">Room Status Board</h3>
+            <p className="text-xs text-[#73706d]">
+              Rooms checked out today arrive here as <strong>cleaning</strong>. Clear them to make
+              them sellable again.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <StatusColumn
+            title="Needs Cleaning"
+            icon={<Sparkles className="w-3.5 h-3.5" />}
+            tone="amber"
+            empty="Nothing to clean — every room is ready."
+            rooms={cleaningRooms}
+            actionLabel="Mark Clean & Available"
+            onAction={(room) => handleSetRoomStatus(room, 'available')}
+          />
+          <StatusColumn
+            title="Out of Service"
+            icon={<Wrench className="w-3.5 h-3.5" />}
+            tone="red"
+            empty="No rooms under maintenance."
+            rooms={maintenanceRooms}
+            actionLabel="Return to Service"
+            onAction={(room) => handleSetRoomStatus(room, 'available')}
+          />
+        </div>
+
+        {readyRooms.length > 0 && (
+          <div className="border-t border-[#e8e4dd] pt-3 flex flex-wrap gap-2">
+            {readyRooms.map((room) => (
+              <button
+                key={room.id}
+                onClick={() => handleSetRoomStatus(room, 'maintenance')}
+                title="Take this room out of service"
+                className="px-3 py-1.5 rounded-full border border-[#e8e4dd] text-[11px] font-semibold text-[#73706d] hover:border-[#c9b4fa] hover:text-[#1b1938] transition-colors"
+              >
+                Room {room.roomNumber} → Maintenance
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Request Summary Badges */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <div className="bg-white border border-[#e8e4dd] p-5 rounded-xl shadow-xs">
           <span className="text-xs text-[#73706d] font-medium">Pending Tasks</span>
@@ -203,3 +286,52 @@ export const HousekeepingTab: React.FC<Props> = ({ hotel }) => {
     </div>
   );
 };
+
+const StatusColumn: React.FC<{
+  title: string;
+  icon: React.ReactNode;
+  tone: 'amber' | 'red';
+  empty: string;
+  rooms: Room[];
+  actionLabel: string;
+  onAction: (room: Room) => void;
+}> = ({ title, icon, tone, empty, rooms, actionLabel, onAction }) => (
+  <div
+    className={`rounded-xl border p-4 ${
+      tone === 'amber'
+        ? 'bg-[#fdf8ed] border-[#f0e2c0]'
+        : 'bg-[#fdf1f2] border-[#f2d4d8]'
+    }`}
+  >
+    <div className="flex items-center justify-between mb-3">
+      <span className={`text-xs font-bold uppercase tracking-wide flex items-center gap-1.5 ${tone === 'amber' ? 'text-[#92650a]' : 'text-[#a12534]'}`}>
+        {icon} {title}
+      </span>
+      <span className="font-mono text-sm font-bold text-[#292827]">{rooms.length}</span>
+    </div>
+
+    {rooms.length === 0 ? (
+      <p className="text-[11px] text-[#73706d]">{empty}</p>
+    ) : (
+      <div className="space-y-2">
+        {rooms.map((room) => (
+          <div
+            key={room.id}
+            className="bg-white border border-[#e8e4dd] rounded-lg p-3 flex items-center justify-between gap-2"
+          >
+            <div>
+              <div className="text-xs font-bold text-[#292827]">Room {room.roomNumber}</div>
+              <div className="text-[10px] text-[#73706d]">Floor {room.floor || 1}</div>
+            </div>
+            <button
+              onClick={() => onAction(room)}
+              className="px-3 py-1.5 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-[11px] font-bold transition-colors whitespace-nowrap"
+            >
+              {actionLabel}
+            </button>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+);

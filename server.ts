@@ -2,8 +2,8 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { initializeApp, getApps } from 'firebase-admin/app';
-import { getAuth, UserRecord } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth, UserRecord, DecodedIdToken } from 'firebase-admin/auth';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import firebaseConfigJson from './firebase-applet-config.json';
 
 // Initialize Firebase Admin SDK
@@ -50,6 +50,48 @@ function rateLimit(maxRequests: number, windowMs: number) {
     bucket.count += 1;
     next();
   };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * The CHECKED_IN booking currently occupying a room, if any.
+ *
+ * Uses a single equality filter (roomId) and filters status in code — a
+ * composite (roomId + status) index would otherwise be required, and rooms
+ * have few enough bookings for this to be cheap.
+ */
+async function findActiveBooking(hotelId: string, roomId: string) {
+  const snap = await adminFirestore
+    .collection('hotels')
+    .doc(hotelId)
+    .collection('bookings')
+    .where('roomId', '==', roomId)
+    .limit(50)
+    .get();
+
+  const match = snap.docs.find((d) => d.data()?.status === 'CHECKED_IN');
+  if (!match) return null;
+  return { id: match.id, ...match.data() } as { id: string; guestId?: string; [key: string]: unknown };
+}
+
+/** Display name for the in-house guest, resolved from guests/{guestId}. */
+async function resolveGuestName(hotelId: string, guestId?: string): Promise<string> {
+  if (!guestId) return '';
+  try {
+    const snap = await adminFirestore
+      .collection('hotels')
+      .doc(hotelId)
+      .collection('guests')
+      .doc(guestId)
+      .get();
+    return snap.exists ? String((snap.data() as { name?: string })?.name || '') : '';
+  } catch (err) {
+    console.warn('Could not resolve guest name:', err);
+    return '';
+  }
 }
 
 // Middleware to verify Firebase ID token and super_admin claim
@@ -158,19 +200,148 @@ async function startServer() {
       const roomId = roomDoc.id;
       const roomNumber = typeof roomData.roomNumber === 'string' ? roomData.roomNumber : '';
 
+      // The guest portal greets the in-house guest by name, but guests have no
+      // read access to bookings or guests (they carry other people's PII). So
+      // the server resolves the name once and hands it over as a display-only
+      // claim instead of granting a collection read.
+      const booking = await findActiveBooking(hotelId, roomId);
+      const guestName = booking?.guestId ? await resolveGuestName(hotelId, booking.guestId) : '';
+
       await adminAuth.setCustomUserClaims(decoded.uid, {
         role: 'guest',
         hotelId,
         roomId,
         roomNumber,
+        guestName: guestName || '',
       });
 
-      return res.json({ success: true, hotelId, roomId, roomNumber });
+      return res.json({ success: true, hotelId, roomId, roomNumber, guestName: guestName || '' });
     } catch (err: any) {
       console.error('Guest session error:', err);
       return res.status(401).json({ error: 'Invalid or expired token', code: 'guest/invalid-session' });
     }
   });
+
+  // -----------------------------------------------------------------------
+  // Folio charge for a guest order.
+  //
+  // Req 4: an order placed in a room with an active CHECKED_IN booking raises
+  // a FOOD/SERVICE charge on that booking's folio. Guests have no Firestore
+  // access to folios at all (see firestore.rules), so this runs through the
+  // Admin SDK. The order pipeline itself is untouched — the client calls this
+  // after its normal order write succeeds.
+  // -----------------------------------------------------------------------
+  app.post(
+    '/api/guest/orders/:orderId/charge',
+    rateLimit(60, 60_000),
+    async (req: Request, res: Response) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
+      }
+
+      const orderId = String(req.params.orderId || '').trim();
+      if (!orderId || orderId.length > 128) {
+        return res.status(400).json({ error: 'A valid order id is required.' });
+      }
+
+      let decoded: DecodedIdToken;
+      try {
+        decoded = await adminAuth.verifyIdToken(authHeader.split('Bearer ')[1]);
+      } catch (err: any) {
+        // A bad/expired token is an auth failure, not a server error.
+        return res.status(401).json({ error: 'Invalid or expired token', code: 'guest/invalid-session' });
+      }
+
+      try {
+        // Guest scope only, and only for the room this session was granted.
+        if (
+          decoded.firebase?.sign_in_provider !== 'anonymous' ||
+          decoded.role !== 'guest' ||
+          !decoded.hotelId ||
+          !decoded.roomId
+        ) {
+          return res.status(403).json({ error: 'Not a room-scoped guest session.', code: 'guest/not-scoped' });
+        }
+
+        const hotelId = String(decoded.hotelId);
+        const roomId = String(decoded.roomId);
+
+        const orderSnap = await adminFirestore
+          .collection('hotels')
+          .doc(hotelId)
+          .collection('orders')
+          .doc(orderId)
+          .get();
+
+        if (!orderSnap.exists) return res.status(404).json({ error: 'Order not found.' });
+
+        const order = orderSnap.data() as {
+          guestUid?: string;
+          roomId?: string;
+          type?: string;
+          totalAmount?: number;
+          items?: Array<{ name?: string; quantity?: number }>;
+        };
+
+        // A guest may only raise charges from their own orders, for their own room.
+        if (order.guestUid !== decoded.uid || (order.roomId && order.roomId !== roomId)) {
+          return res.status(403).json({ error: 'Order does not belong to this session.', code: 'guest/forbidden' });
+        }
+
+        const amount = Number(order.totalAmount || 0);
+        if (!Number.isFinite(amount) || amount <= 0) {
+          return res.json({ linked: false, reason: 'zero-amount' });
+        }
+
+        const booking = await findActiveBooking(hotelId, roomId);
+        if (!booking) {
+          return res.json({ linked: false, reason: 'no-active-booking' });
+        }
+
+        const folioRef = adminFirestore.collection('hotels').doc(hotelId).collection('folios').doc(booking.id);
+        const chargesRef = folioRef.collection('charges');
+
+        // Idempotent: one charge per order, no matter how often this is called.
+        const existing = await chargesRef.where('sourceOrderId', '==', orderId).limit(1).get();
+        if (!existing.empty) {
+          return res.json({ linked: true, reason: 'already-linked' });
+        }
+
+        const description =
+          order.items && order.items.length > 0
+            ? order.items
+                .map((i) => `${i.quantity || 1}x ${i.name || 'Item'}`)
+                .join(', ')
+                .slice(0, 200)
+            : order.type === 'service'
+              ? 'Room service request'
+              : 'In-room dining order';
+
+        await adminFirestore.runTransaction(async (tx) => {
+          const folioSnap = await tx.get(folioRef);
+          tx.set(chargesRef.doc(), {
+            type: order.type === 'service' ? 'SERVICE' : 'FOOD',
+            description,
+            amount,
+            sourceOrderId: orderId,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+          if (folioSnap.exists) {
+            tx.update(folioRef, { balance: FieldValue.increment(amount) });
+          } else {
+            // Booking created before folios existed — create it on demand.
+            tx.set(folioRef, { bookingId: booking.id, status: 'OPEN', balance: amount });
+          }
+        });
+
+        return res.json({ linked: true });
+      } catch (err: any) {
+        console.error('Order charge error:', err);
+        return res.status(500).json({ error: err?.message || 'Could not post the charge.' });
+      }
+    }
+  );
 
   // Create Hotel Admin User via Firebase Admin SDK
   // This endpoint creates the Firebase Auth user without logging out the currently signed-in Super Admin

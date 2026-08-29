@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { firestoreService } from '../../services/firestoreService';
 import { deleteImageByUrl } from '../../services/storageService';
 import { ImageUploader } from '../common/ImageUploader';
-import { Hotel, Room } from '../../types';
+import { Hotel, Room, RoomTypeDefinition } from '../../types';
 import { generateQrDataUrl } from '../../utils/qr';
 import { generateRoomToken } from '../../utils/qr';
 import { useAuth } from '../../context/AuthContext';
@@ -35,9 +35,9 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
   const [isCreatingRooms, setIsCreatingRooms] = useState(false);
   const [startRoom, setStartRoom] = useState('101');
   const [countToCreate, setCountToCreate] = useState('5');
-  const [roomType, setRoomType] = useState('Deluxe King Suite');
+  const [roomTypes, setRoomTypes] = useState<RoomTypeDefinition[]>([]);
+  const [roomTypeId, setRoomTypeId] = useState('');
   const [floor, setFloor] = useState('1');
-  const [pricePerNight, setPricePerNight] = useState('150');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -53,6 +53,18 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
         console.error('Error fetching rooms:', err);
         setLoading(false);
       }
+    );
+    return () => unsubscribe();
+  }, [hotel.id]);
+
+  useEffect(() => {
+    const unsubscribe = firestoreService.subscribeRoomTypes(
+      hotel.id,
+      (types) => {
+        setRoomTypes(types);
+        setRoomTypeId((current) => current || types[0]?.id || '');
+      },
+      (err) => console.error('Error fetching room types:', err)
     );
     return () => unsubscribe();
   }, [hotel.id]);
@@ -78,7 +90,10 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
       const startNum = parseInt(startRoom, 10) || 101;
       const numRooms = parseInt(countToCreate, 10) || 1;
       const floorNum = parseInt(floor, 10) || 1;
-      const price = parseFloat(pricePerNight) || 100;
+      if (!roomTypeId) {
+        alert('Create a room type first — rooms must be linked to a rate.');
+        return;
+      }
 
       for (let i = 0; i < numRooms; i++) {
         const roomNum = (startNum + i).toString();
@@ -87,14 +102,15 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
         // token and a room-scoped session. Existing rooms keep their current
         // token so already-printed QR codes stay valid.
         const permanentToken = generateRoomToken();
+        const typeName = roomTypes.find((t) => t.id === roomTypeId)?.name || 'Standard';
         await firestoreService.addRoom(hotel.id, {
           roomNumber: roomNum,
           floor: floorNum,
-          type: roomType,
+          roomTypeId,
+          type: typeName,
           status: 'available',
           permanentToken,
-          pricePerNight: price,
-        } as any);
+        });
       }
 
       setIsCreatingRooms(false);
@@ -179,7 +195,7 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {rooms.map((room) => {
-            const isOccupied = room.status === 'occupied' || room.status === 'OCCUPIED';
+            const isOccupied = room.status === 'occupied';
             return (
               <div
                 key={room.id}
@@ -209,12 +225,13 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
                   </div>
 
                   <div className="mt-3 space-y-1">
-                    <div className="text-sm font-bold text-[#292827]">{room.type || 'Standard Room'}</div>
+                    <div className="text-sm font-bold text-[#292827]">
+                      {roomTypes.find((t) => t.id === room.roomTypeId)?.name || room.type || 'Standard Room'}
+                    </div>
                     <div className="text-xs text-[#73706d]">Floor {room.floor || 1}</div>
-                    {room.guestName && (
-                      <div className="text-xs text-[#292827] font-semibold flex items-center gap-1 mt-1">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-[#155555]" />
-                        <span>Guest: {room.guestName}</span>
+                    {!room.roomTypeId && (
+                      <div className="text-[11px] text-[#b45309] font-semibold mt-1">
+                        No room type linked — run the reservation migration.
                       </div>
                     )}
                   </div>
@@ -309,31 +326,27 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
 
               <div>
                 <label className="block text-xs font-semibold text-[#292827] mb-1">
-                  Room Category / Type
+                  Room Type (sets the nightly rate)
                 </label>
-                <input
-                  type="text"
+                <select
                   required
-                  value={roomType}
-                  onChange={(e) => setRoomType(e.target.value)}
-                  placeholder="e.g. Deluxe King Suite"
+                  value={roomTypeId}
+                  onChange={(e) => setRoomTypeId(e.target.value)}
                   className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
-                />
+                >
+                  {roomTypes.length === 0 && <option value="">-- No room types yet --</option>}
+                  {roomTypes.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} — {hotel.currencySymbol || '$'}{t.baseRate}/nt · sleeps {t.maxOccupancy}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-[#292827] mb-1">
-                  Rate / Price per Night ({hotel.currencySymbol || '$'})
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  required
-                  value={pricePerNight}
-                  onChange={(e) => setPricePerNight(e.target.value)}
-                  placeholder="150"
-                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
-                />
+              <div className="bg-[#fafaf8] border border-[#e8e4dd] rounded-xl px-3.5 py-2.5 text-xs text-[#73706d]">
+                The nightly rate now comes from the <strong>room type</strong>, not the room. Manage
+                rates in the room type (base rate) and override per stay with the booking’s
+                <em> agreed rate</em>.
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#e8e4dd]">

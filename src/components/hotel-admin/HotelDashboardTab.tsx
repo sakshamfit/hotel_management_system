@@ -44,7 +44,7 @@ export const HotelDashboardTab: React.FC<Props> = ({ hotel, onNavigateTab }) => 
 
   const totalRooms = rooms.length;
   const occupiedRooms = rooms.filter(
-    (r) => r.status === 'occupied' || r.status === 'OCCUPIED'
+    (r) => r.status === 'occupied'
   ).length;
   const occupancyRate = totalRooms > 0 ? Math.round((occupiedRooms / totalRooms) * 100) : 0;
 

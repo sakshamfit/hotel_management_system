@@ -572,3 +572,77 @@ reservation-engine data model rather than bolting on now.
 exists yet — see `docs/super-admin-setup.md`), and delete/rotate the
 `ra7650384@gmail.com` account if the old bootstrap ever ran against a live
 project.
+
+---
+
+## 12. Reservation engine (implemented)
+
+Built to the agreed schema. Model, invariants, flows and migration steps are in
+[`docs/reservation-model.md`](docs/reservation-model.md). Summary:
+
+### What was built
+
+1. **Migration** — `npm run migrate:reservations` (dry-run by default,
+   `--apply` to write). Infers `roomTypes` from the legacy free-text `room.type`
+   (median `pricePerNight` → `baseRate`, max `capacity` → `maxOccupancy`, else
+   one "Standard" type per hotel), stamps `roomTypeId`, normalises status
+   casing, converts every occupied room into a `guests` doc + `CHECKED_IN`
+   booking + roomNights + OPEN folio, and deletes the guest fields off the room.
+2. **`createBooking` in a `runTransaction`** — reads every
+   `roomNights/{roomId}_{date}` for `[checkInDate, checkOutDate)`, throws
+   `BookingConflictError` (with the conflicting dates) if any exist, otherwise
+   writes booking + one roomNight per night + folio atomically. Availability
+   search uses a single range query on `date` (ISO dates sort
+   lexicographically — no composite index).
+3. **Front desk rewired** — `GuestCheckinTab` rewritten around bookings:
+   availability-aware New Reservation modal, Due to Arrive / In House /
+   Upcoming / Recently Checked Out, check-in → `CHECKED_IN` + room `occupied`,
+   check-out → `CHECKED_OUT` + room **`cleaning`**.
+4. **Order → folio charge** — `POST /api/guest/orders/:orderId/charge` writes a
+   `FOOD`/`SERVICE` charge and increments the balance via the Admin SDK
+   (guests have no folio access). Idempotent per `sourceOrderId`, best-effort,
+   order pipeline core untouched.
+5. **Rules** — `guests`, `roomTypes`, `roomNights`, `bookings`, `folios`
+   (+ `charges`, `payments`) are `isStaffOf(hotelId)` only.
+
+Plus, to keep the app coherent: a **room-status board in HousekeepingTab**
+(`cleaning`/`maintenance` → `available`) so checked-out rooms don't strand;
+`RoomsAndQrTab` now links rooms to room types instead of a per-room price;
+`RoomStatus` casing fixed to the four-value union everywhere.
+
+### Flagged: components that assumed room-doc guest fields
+
+| Location | Was | Now |
+|---|---|---|
+| `GuestCheckinTab` | wrote/read `room.guestName|guestPhone|guestEmail|checkedInAt|expectedCheckout`; occupancy inferred from `room.status` | **rewritten** — joins `bookings` + `guests` + `roomTypes`; creates real bookings |
+| `RoomsAndQrTab:214` | rendered `room.guestName` on the room card | removed; shows the room type + a "no room type linked" hint until migration runs |
+| `GuestRoomView:195,238,342` | `room?.guestName` for the welcome line and as the name on orders | uses `guestSession.guestName`, resolved **server-side** from the active booking and handed over as a display-only claim (guests still cannot read bookings) |
+| `firestoreService.createBooking` | wrote `bookings` + patched room to `occupied` | replaced by the transaction |
+| `firestoreService.checkOutGuest` | set room `available` | sets `cleaning` |
+| `types.ts Room` | 7 guest/occupancy fields | `roomTypeId` + 4-value `status` only |
+| `HotelDashboardTab:47` | `status === 'occupied' \|\| 'OCCUPIED'` | `'occupied'` (dead casing removed) |
+
+**Unaffected** — these read `order.guestName`, not the room:
+`NewOrderAlertCenter`, `HotelDashboardTab` (order list), `HousekeepingTab`,
+`KitchenDisplayTab`, `LiveRequestsTab`.
+
+### Two requirement conflicts, resolved as flagged
+
+- **Req 4 vs Req 5:** a guest cannot write a charge to a folio they may not
+  read. The charge is written by the server (Admin SDK) after the normal order
+  write — the order pipeline itself is untouched. Non-atomic: if the client
+  dies between the two calls the folio misses that charge. Proper fix is a
+  Cloud Function (Blaze) or a night-audit sweep; logged as a known gap.
+- **Req 3's `cleaning` dead-end:** nothing cleared `cleaning`, so checked-out
+  rooms would have vanished from the front desk (audit §4). Added the minimal
+  room-status board in HousekeepingTab.
+
+### Verification
+
+- `npx tsc --noEmit` clean; `npm run build` succeeds.
+- `npm run check:dates` — 17/17 pass, including the half-open interval
+  (check-out day not charged), month/year boundaries and a leap day.
+- Endpoints: `/api/guest/orders/:id/charge` → 401 without a token, 401 with a
+  malformed token; `/api/guest/session` → 401 without a token.
+- Migration was **not** executed — it needs real Admin credentials. Run the dry
+  run first against a copy of production data.

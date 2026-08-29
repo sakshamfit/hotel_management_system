@@ -182,7 +182,38 @@ service cloud.firestore {
         allow update, delete: if isStaffOf(hotelId);
       }
 
-      // ---- everything else under a hotel (bookings, staff, future collections)
+      // ---- reservations: staff-only --------------------------------------
+      // Guests have NO access to any of these, directly or indirectly. They
+      // interact only through `orders` (already scoped above); the server
+      // raises folio charges on their behalf with the Admin SDK.
+      //
+      // Guests in particular must never read:
+      //   • bookings / guests — other people's names, phones and ID proofs
+      //   • roomNights        — the occupancy map for the whole property
+      //   • folios / charges  — another guest's bill
+      match /guests/{guestId} {
+        allow read, write: if isStaffOf(hotelId);
+      }
+      match /roomTypes/{typeId} {
+        allow read, write: if isStaffOf(hotelId);
+      }
+      match /roomNights/{nightId} {
+        allow read, write: if isStaffOf(hotelId);
+      }
+      match /bookings/{bookingId} {
+        allow read, write: if isStaffOf(hotelId);
+      }
+      match /folios/{folioId} {
+        allow read, write: if isStaffOf(hotelId);
+        match /charges/{chargeId} {
+          allow read, write: if isStaffOf(hotelId);
+        }
+        match /payments/{paymentId} {
+          allow read, write: if isStaffOf(hotelId);
+        }
+      }
+
+      // ---- everything else under a hotel (staff, future collections)
       match /{subcollection}/{document=**} {
         allow read, write: if isStaffOf(hotelId);
       }

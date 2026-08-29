@@ -1,3 +1,5 @@
+import type { Timestamp } from 'firebase/firestore';
+
 export type UserRole =
   | 'super_admin'
   | 'hotel_admin'
@@ -21,6 +23,11 @@ export interface GuestClaims {
   hotelId: string;
   roomId: string;
   roomNumber: string;
+  /**
+   * Display-only: resolved by the server from the active booking so the portal
+   * can greet the guest without any read access to bookings or guests.
+   */
+  guestName?: string;
 }
 
 export interface AuthClaims {
@@ -104,44 +111,154 @@ export interface User {
   token: string;
 }
 
-export type RoomStatus = 'available' | 'occupied' | 'maintenance' | 'cleaning' | 'VACANT' | 'OCCUPIED';
-export type RoomType = 'Standard' | 'Deluxe' | 'Premium' | 'Suite' | 'Family' | 'Executive' | 'Presidential' | 'Chalet' | string;
+/**
+ * FIXED CASING: this union previously carried both `available`/`occupied` and
+ * `VACANT`/`OCCUPIED`, so rooms in `cleaning`/`maintenance` matched neither
+ * filter and silently vanished from the front desk (audit §4).
+ */
+export type RoomStatus = 'available' | 'occupied' | 'cleaning' | 'maintenance';
+
+/** hotels/{hotelId}/roomTypes/{roomTypeId} — the rate + inventory definition. */
+export interface RoomTypeDefinition {
+  id: string;
+  hotelId: string;
+  name: string; // "Deluxe", "Suite"
+  baseRate: number; // nightly, pre-tax
+  maxOccupancy: number;
+  amenities: string[];
+  createdAt?: string;
+}
+
+/**
+ * Legacy free-text room label (`Room.type`, e.g. "Deluxe King Suite") kept only
+ * so the migration can infer room types from existing data. New code reads
+ * `roomTypeId`.
+ */
+export type RoomType = string;
 
 export interface Room {
   id: string;
   hotelId: string;
   roomNumber: string;
   floor: number;
+  /** NEW — links the room to its rate/inventory definition. */
+  roomTypeId: string;
   roomType?: RoomType;
   type?: string;
   capacity?: number;
   status: RoomStatus;
   permanentToken: string; // Secure token used in QR /room/:permanentToken
   photoUrl?: string; // Uploaded to hotels/{hotelId}/rooms/{roomId}/image.jpg (Firebase Storage)
-  activeGuestSessionId?: string | null;
-  guestName?: string;
-  guestPhone?: string;
-  guestEmail?: string;
-  checkedInAt?: string;
-  expectedCheckout?: string;
-  lastCheckedOutAt?: string;
   createdAt?: string;
+  // REMOVED (moved to Guest / Booking by the reservation migration):
+  //   guestName, guestPhone, guestEmail, checkedInAt, expectedCheckout,
+  //   lastCheckedOutAt, activeGuestSessionId
 }
 
-export interface GuestSession {
+// ===========================================================================
+// RESERVATIONS
+// ===========================================================================
+
+/**
+ * hotels/{hotelId}/guests/{guestId}
+ * The booking contact. Deliberately NOT the anonymous portal auth user — a
+ * guest profile outlives any single stay and any single QR session.
+ */
+export interface Guest {
   id: string;
   hotelId: string;
+  name: string;
+  phone: string;
+  email?: string;
+  idProofType?: string;
+  idProofNumber?: string;
+  createdAt?: Timestamp | string;
+}
+
+export type BookingStatus = 'RESERVED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'CANCELLED' | 'NO_SHOW';
+export type BookingSource = 'walk-in' | 'phone' | 'ota';
+
+/** hotels/{hotelId}/bookings/{bookingId} */
+export interface Booking {
+  id: string;
+  hotelId: string;
+  guestId: string;
   roomId: string;
-  roomNumber: string;
-  guestName: string;
-  guestPhone: string;
-  guestEmail?: string;
-  guestCount?: number;
-  checkInTime?: string;
-  expectedCheckOutTime?: string;
-  checkOutDate?: string;
-  actualCheckOutTime?: string | null;
-  status?: 'active' | 'completed';
+  roomTypeId: string;
+  /** Date-only "YYYY-MM-DD". The stay covers [checkInDate, checkOutDate). */
+  checkInDate: string;
+  checkOutDate: string;
+  actualCheckInAt?: Timestamp | string | null;
+  actualCheckOutAt?: Timestamp | string | null;
+  status: BookingStatus;
+  /** Snapshot at booking time — later roomType rate changes must not move it. */
+  agreedRate: number;
+  numGuests: number;
+  source: BookingSource;
+  createdBy: string; // staff uid
+  createdAt?: Timestamp | string;
+
+  // ---- joined at read time (never stored) ----
+  guestName?: string;
+  guestPhone?: string;
+  roomNumber?: string;
+}
+
+/**
+ * hotels/{hotelId}/roomNights/{roomId}_{date}
+ * THE double-booking lock: the existence of this document means that room is
+ * taken on that night. Written inside the same transaction as the booking.
+ */
+export interface RoomNight {
+  id?: string;
+  roomId: string;
+  date: string; // "YYYY-MM-DD"
+  bookingId: string;
+}
+
+export type FolioStatus = 'OPEN' | 'CLOSED';
+
+/** hotels/{hotelId}/folios/{bookingId} — one folio per booking, same id. */
+export interface Folio {
+  id: string; // == bookingId
+  bookingId: string;
+  status: FolioStatus;
+  balance: number;
+}
+
+export type ChargeType = 'ROOM' | 'FOOD' | 'SERVICE' | 'TAX' | 'DISCOUNT';
+
+/** hotels/{hotelId}/folios/{bookingId}/charges/{chargeId} */
+export interface Charge {
+  id: string;
+  type: ChargeType;
+  description: string;
+  amount: number;
+  sourceOrderId?: string; // links back to the existing orders collection
+  createdAt?: Timestamp | string;
+}
+
+export type PaymentMethod = 'cash' | 'card' | 'upi';
+
+/** hotels/{hotelId}/folios/{bookingId}/payments/{paymentId} */
+export interface Payment {
+  id: string;
+  amount: number;
+  method: PaymentMethod;
+  receivedBy: string;
+  receivedAt?: Timestamp | string;
+}
+
+/** Input for createBooking — everything the front desk supplies. */
+export interface CreateBookingInput {
+  guestId: string;
+  roomId: string;
+  roomTypeId: string;
+  checkInDate: string;
+  checkOutDate: string;
+  agreedRate: number;
+  numGuests: number;
+  source: BookingSource;
 }
 
 export interface ServiceCategory {
