@@ -21,9 +21,36 @@ if (!getApps().length) {
 const adminAuth = getAuth();
 const adminFirestore = getFirestore();
 
-// The only account the (unauthenticated) bootstrap endpoint may configure.
-// Must match BOOTSTRAP_SUPER_ADMIN_EMAIL in src/services/superAdminBootstrap.ts.
-const BOOTSTRAP_SUPER_ADMIN_EMAIL = 'ra7650384@gmail.com';
+// ---------------------------------------------------------------------------
+// Rate limiting (per-instance, in-memory)
+// ---------------------------------------------------------------------------
+// Enough to make online guessing of room tokens / credential stuffing
+// impractical. For a multi-instance deployment back this with Redis/Firestore.
+interface RateBucket {
+  count: number;
+  resetAt: number;
+}
+const rateBuckets = new Map<string, RateBucket>();
+
+function rateLimit(maxRequests: number, windowMs: number) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const key = `${req.ip || 'unknown'}:${req.path}`;
+    const now = Date.now();
+    const bucket = rateBuckets.get(key);
+
+    if (!bucket || bucket.resetAt <= now) {
+      rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+      next();
+      return;
+    }
+    if (bucket.count >= maxRequests) {
+      res.status(429).json({ error: 'Too many requests. Please try again shortly.' });
+      return;
+    }
+    bucket.count += 1;
+    next();
+  };
+}
 
 // Middleware to verify Firebase ID token and super_admin claim
 async function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
@@ -48,9 +75,10 @@ async function requireSuperAdmin(req: Request, res: Response, next: NextFunction
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json());
+  // Small body cap: every API here takes a handful of string fields.
+  app.use(express.json({ limit: '64kb' }));
 
   // Health check
   app.get('/api/health', (req: Request, res: Response) => {
@@ -62,58 +90,85 @@ async function startServer() {
     });
   });
 
-  // Bootstrap Super Admin Endpoint
-  // Configures ONLY the platform's designated bootstrap super admin account.
-  // Any other email is rejected so the open endpoint cannot be used to grant
-  // super_admin claims to arbitrary accounts.
-  app.post('/api/auth/bootstrap-super-admin', async (req: Request, res: Response) => {
-    const { email = BOOTSTRAP_SUPER_ADMIN_EMAIL, password, name = 'Master Super Admin' } = req.body;
-    const targetEmail = (email || '').toLowerCase().trim();
+  // -----------------------------------------------------------------------
+  // Guest session — exchange a room QR token for room-scoped custom claims.
+  //
+  // The ONLY way an unauthenticated visitor obtains any access. It:
+  //   • requires a valid Firebase ID token (the caller is signed in),
+  //   • refuses any caller that is not an anonymous user,
+  //   • refuses to downgrade or overwrite an existing staff role,
+  //   • resolves the token server-side, so the client can never enumerate
+  //     across tenants,
+  //   • grants only { role: 'guest', hotelId, roomId, roomNumber }.
+  //
+  // Super admins are NOT minted here — see scripts/create-super-admin.ts.
+  // -----------------------------------------------------------------------
+  app.post('/api/guest/session', rateLimit(20, 60_000), async (req: Request, res: Response) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
+    }
 
-    if (targetEmail !== BOOTSTRAP_SUPER_ADMIN_EMAIL) {
-      return res.status(403).json({
-        error: 'Forbidden: this endpoint only configures the platform bootstrap super admin account.',
-      });
+    const roomToken = typeof req.body?.roomToken === 'string' ? req.body.roomToken.trim() : '';
+    if (!roomToken || roomToken.length > 256) {
+      return res.status(400).json({ error: 'A room token is required.', code: 'guest/invalid-token' });
     }
 
     try {
-      let userRecord: UserRecord;
-      try {
-        userRecord = await adminAuth.getUserByEmail(targetEmail);
-      } catch (notFoundErr: any) {
-        // User does not exist, create it
-        userRecord = await adminAuth.createUser({
-          email: targetEmail,
-          password: typeof password === 'string' && password.length >= 6 ? password : 'admin123',
-          displayName: name,
-          emailVerified: true,
+      const decoded = await adminAuth.verifyIdToken(authHeader.split('Bearer ')[1]);
+
+      // Anonymous users only — never touch a real account's claims.
+      const isAnonymous = decoded.firebase?.sign_in_provider === 'anonymous';
+      if (!isAnonymous) {
+        return res.status(403).json({
+          error: 'Only anonymous guest sessions can be scoped to a room.',
+          code: 'guest/not-anonymous',
+        });
+      }
+      if (decoded.role) {
+        // A signed-in staff member must never be demoted to guest scope.
+        return res.status(403).json({
+          error: 'This session already holds a staff role.',
+          code: 'guest/already-roled',
         });
       }
 
-      // If user exists and a new password was provided (>= 6 chars), update password
-      if (password && password.length >= 6) {
-        try {
-          await adminAuth.updateUser(userRecord.uid, { password });
-        } catch (updateErr) {
-          console.warn('Could not update password:', updateErr);
-        }
+      // Resolve the token across every hotel (Admin SDK bypasses rules; the
+      // client could not perform this collection-group query itself).
+      const snap = await adminFirestore
+        .collectionGroup('rooms')
+        .where('permanentToken', '==', roomToken)
+        .limit(1)
+        .get();
+
+      if (snap.empty) {
+        return res.status(404).json({
+          error: 'This room code is not recognised.',
+          code: 'guest/unknown-room',
+        });
       }
 
-      // Assign Super Admin custom claim
-      await adminAuth.setCustomUserClaims(userRecord.uid, {
-        role: 'super_admin',
+      const roomDoc = snap.docs[0];
+      const hotelRef = roomDoc.ref.parent.parent;
+      if (!hotelRef) {
+        return res.status(404).json({ error: 'Malformed room reference.', code: 'guest/unknown-room' });
+      }
+      const roomData = roomDoc.data();
+      const hotelId = hotelRef.id;
+      const roomId = roomDoc.id;
+      const roomNumber = typeof roomData.roomNumber === 'string' ? roomData.roomNumber : '';
+
+      await adminAuth.setCustomUserClaims(decoded.uid, {
+        role: 'guest',
+        hotelId,
+        roomId,
+        roomNumber,
       });
 
-      return res.json({
-        success: true,
-        message: `Super Admin account ${targetEmail} configured with super_admin claim.`,
-        uid: userRecord.uid,
-        email: userRecord.email,
-        role: 'super_admin',
-      });
+      return res.json({ success: true, hotelId, roomId, roomNumber });
     } catch (err: any) {
-      console.error('Error bootstrapping Super Admin:', err);
-      return res.status(500).json({ error: err.message || 'Failed to bootstrap Super Admin' });
+      console.error('Guest session error:', err);
+      return res.status(401).json({ error: 'Invalid or expired token', code: 'guest/invalid-session' });
     }
   });
 
@@ -216,7 +271,11 @@ async function startServer() {
   });
 
   // Set Custom Claims Endpoint (Super Admin only)
-  app.post('/api/admin/set-user-claims', requireSuperAdmin, async (req: Request, res: Response) => {
+  app.post(
+    '/api/admin/set-user-claims',
+    requireSuperAdmin,
+    rateLimit(30, 60_000),
+    async (req: Request, res: Response) => {
     const { email, role, hotelId } = req.body;
     if (!email || !role) {
       return res.status(400).json({ error: 'Email and role are required' });
@@ -234,7 +293,8 @@ async function startServer() {
     } catch (err: any) {
       return res.status(500).json({ error: err.message || 'Failed to set claims' });
     }
-  });
+    }
+  );
 
   // Vite integration
   if (process.env.NODE_ENV !== 'production') {

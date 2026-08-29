@@ -9,6 +9,7 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
+    "create-super-admin": "tsx scripts/create-super-admin.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

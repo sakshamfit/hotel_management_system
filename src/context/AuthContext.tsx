@@ -9,13 +9,20 @@ import {
 } from 'firebase/auth';
 import { auth } from '../firebase/config';
 import { firestoreService } from '../services/firestoreService';
-import { ensureSuperAdminBootstrapped, BOOTSTRAP_SUPER_ADMIN_EMAIL } from '../services/superAdminBootstrap';
+import { ensureGuestSession, clearGuestSessionCache, GuestSessionError } from '../services/guestSession';
+import type { GuestSessionInfo } from '../services/guestSession';
 import { User, Hotel, UserRole } from '../types';
 
 interface AuthContextType {
   user: User | null;
   firebaseUser: FirebaseUser | null;
   hotel: Hotel | null;
+  /**
+   * Room-scoped session for an anonymous guest (present only when the guest
+   * portal is open and no staff member is signed in). Null for staff.
+   */
+  guestSession: GuestSessionInfo | null;
+  guestSessionError: string | null;
   activeExperience: 'super_admin' | 'hotel_os' | 'guest_experience' | 'login';
   setActiveExperience: (exp: 'super_admin' | 'hotel_os' | 'guest_experience' | 'login') => void;
   guestRoomToken: string;
@@ -42,22 +49,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [allHotels, setAllHotels] = useState<Hotel[]>([]);
   const [selectedTenantId, setSelectedTenantIdState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [bootstrapSettled, setBootstrapSettled] = useState<boolean>(false);
-
-  // One-time super admin bootstrap — runs BEFORE the login screen appears.
-  // Silently ensures the first super_admin account exists (skips forever once
-  // one exists). Never blocks the app on failure.
-  useEffect(() => {
-    let cancelled = false;
-    ensureSuperAdminBootstrapped()
-      .catch((err) => console.warn('[super-admin-bootstrap] skipped:', err?.message))
-      .finally(() => {
-        if (!cancelled) setBootstrapSettled(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const [guestSession, setGuestSession] = useState<GuestSessionInfo | null>(null);
+  const [guestSessionError, setGuestSessionError] = useState<string | null>(null);
 
   // Check URL token for Guest Room QR scan
   useEffect(() => {
@@ -79,7 +72,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const claimRole = tokenResult.claims.role as string | undefined;
       const claimHotelId = tokenResult.claims.hotelId as string | undefined;
 
-      // Read role from Firestore users/{uid} document first
+      // Guests are anonymous users carrying a server-issued { role: 'guest',
+      // hotelId, roomId, roomNumber } claim. They hold no users/{uid} role
+      // document, so they must never fall through to the staff path (which
+      // would sign them straight back out).
+      if (fbUser.isAnonymous || claimRole === 'guest') {
+        // An anonymous session with no room token has nothing it may access.
+        if (!new URLSearchParams(window.location.search).get('token')) {
+          await signOut(auth);
+          setUser(null);
+          setHotel(null);
+          setSelectedTenantIdState(null);
+          setActiveExperience('login');
+          return;
+        }
+        setUser({
+          id: fbUser.uid,
+          hotelId: claimHotelId || null,
+          name: 'In-Room Guest',
+          email: '',
+          phone: '',
+          role: 'guest' as UserRole,
+          token: tokenResult.token,
+        });
+        setHotel(null);
+        setSelectedTenantIdState(null);
+        setActiveExperience('guest_experience');
+        return;
+      }
+
+      // PRIMARY: read role + hotelId from the Firestore users/{uid} document.
       const docUser = await firestoreService.fetchUserRole(fbUser.uid);
       let role = (docUser?.role as string | undefined) || claimRole;
       let hotelId = docUser?.hotelId || claimHotelId;
@@ -90,19 +112,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         tokenResult = await fbUser.getIdTokenResult(true);
         role = (docUser?.role as string | undefined) || (tokenResult.claims.role as string | undefined);
         hotelId = docUser?.hotelId || (tokenResult.claims.hotelId as string | undefined);
-      }
-
-      // Bootstrap-created admin: claim may not be set yet (no Cloud Functions on
-      // the free plan) — ask the app server (Admin SDK) to attach it, then re-read.
-      if (role !== 'super_admin' && role !== 'hotel_admin' && fbUser.email?.toLowerCase() === BOOTSTRAP_SUPER_ADMIN_EMAIL) {
-        try {
-          await firestoreService.bootstrapSuperAdmin(fbUser.email);
-          tokenResult = await fbUser.getIdTokenResult(true);
-          role = (docUser?.role as string | undefined) || (tokenResult.claims.role as string | undefined);
-          hotelId = docUser?.hotelId || (tokenResult.claims.hotelId as string | undefined);
-        } catch (e) {
-          console.warn('Auto-bootstrap error:', e);
-        }
       }
 
       // A valid role MUST come from the Firestore users/{uid} doc or the ID token.
@@ -165,6 +174,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
         setHotel(null);
         setSelectedTenantIdState(null);
+        setGuestSession(null);
+        clearGuestSessionCache();
         const params = new URLSearchParams(window.location.search);
         if (!params.get('token')) {
           setActiveExperience('login');
@@ -175,6 +186,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => unsubscribeAuth();
   }, [processUserClaims]);
+
+  // Guest portal: exchange the scanned room token for a room-scoped session.
+  // Only runs for anonymous visitors — a signed-in staff member previewing the
+  // portal keeps their own (higher-privilege) session untouched, so their
+  // super_admin / hotel_admin claims are never overwritten with guest claims.
+  useEffect(() => {
+    if (!guestRoomToken) return;
+    // Wait for auth state to settle before deciding whether this is a guest.
+    if (firebaseUser && !firebaseUser.isAnonymous) {
+      setGuestSession(null);
+      setGuestSessionError(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const session = await ensureGuestSession(guestRoomToken);
+        if (cancelled) return;
+        setGuestSession(session);
+        setGuestSessionError(null);
+      } catch (err: any) {
+        if (cancelled) return;
+        setGuestSession(null);
+        setGuestSessionError(err?.message || 'Could not open this room session.');
+        console.error('[guest-session]', err?.code || err?.message);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [guestRoomToken, firebaseUser?.uid, firebaseUser?.isAnonymous]);
 
   // Subscribe to real-time hotels collection when user is Super Admin
   useEffect(() => {
@@ -275,6 +319,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setHotel(null);
     setSelectedTenantIdState(null);
+    setGuestSession(null);
+    clearGuestSessionCache();
     setActiveExperience('login');
   };
 
@@ -284,13 +330,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         firebaseUser,
         hotel,
+        guestSession,
+        guestSessionError,
         activeExperience,
         setActiveExperience,
         guestRoomToken,
         setGuestRoomToken,
         allHotels,
-        // Keep the splash visible until the one-time bootstrap check settles
-        isLoading: isLoading || !bootstrapSettled,
+        isLoading,
         selectedTenantId,
         setSelectedTenantId,
         loginWithCredentials,

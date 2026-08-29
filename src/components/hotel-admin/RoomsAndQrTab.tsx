@@ -4,6 +4,7 @@ import { deleteImageByUrl } from '../../services/storageService';
 import { ImageUploader } from '../common/ImageUploader';
 import { Hotel, Room } from '../../types';
 import { generateQrDataUrl } from '../../utils/qr';
+import { generateRoomToken } from '../../utils/qr';
 import { useAuth } from '../../context/AuthContext';
 import {
   QrCode,
@@ -81,7 +82,11 @@ export const RoomsAndQrTab: React.FC<Props> = ({ hotel }) => {
 
       for (let i = 0; i < numRooms; i++) {
         const roomNum = (startNum + i).toString();
-        const permanentToken = `qr_${hotel.id}_rm${roomNum}_${Date.now().toString(36)}`;
+        // Unguessable token: the QR is a bearer credential for the room, and
+        // /api/guest/session is the only thing standing between a guessed
+        // token and a room-scoped session. Existing rooms keep their current
+        // token so already-printed QR codes stay valid.
+        const permanentToken = generateRoomToken();
         await firestoreService.addRoom(hotel.id, {
           roomNumber: roomNum,
           floor: floorNum,

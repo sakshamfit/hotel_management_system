@@ -234,6 +234,36 @@ export const firestoreService = {
     );
   },
 
+  /**
+   * Single-room listener — used by the guest portal.
+   *
+   * Guests are scoped to ONE room (their own) by firestore.rules, so they must
+   * read by document id rather than listing the whole rooms collection
+   * (which also carries other guests' names and phone numbers).
+   */
+  subscribeRoom: (
+    hotelId: string,
+    roomId: string,
+    onUpdate: (room: Room | null) => void,
+    onError?: (err: Error) => void
+  ): Unsubscribe => {
+    const roomRef = doc(db, 'hotels', hotelId, 'rooms', roomId);
+    return onSnapshot(
+      roomRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          onUpdate({ id: docSnap.id, hotelId, ...docSnap.data() } as Room);
+        } else {
+          onUpdate(null);
+        }
+      },
+      (error) => {
+        console.error(`Error subscribing to room ${roomId} for hotel ${hotelId}:`, error);
+        if (onError) onError(error);
+      }
+    );
+  },
+
   addRoom: async (hotelId: string, roomData: Omit<Room, 'id' | 'hotelId'>): Promise<string> => {
     const roomsCol = collection(db, 'hotels', hotelId, 'rooms');
     const newDoc = await addDoc(roomsCol, {
@@ -370,6 +400,39 @@ export const firestoreService = {
       },
       (error) => {
         console.error(`Error subscribing to orders for hotel ${hotelId}:`, error);
+        if (onError) onError(error);
+      }
+    );
+  },
+
+  /**
+   * Orders belonging to ONE guest, identified by the anonymous uid stamped onto
+   * the order at creation time (see GuestRoomView / the `orders` rules).
+   *
+   * Deliberately a single equality filter with no orderBy: a composite index
+   * would otherwise be required. Sorting newest-first happens client-side.
+   */
+  subscribeGuestOrders: (
+    hotelId: string,
+    guestUid: string,
+    onUpdate: (orders: ServiceRequest[]) => void,
+    onError?: (err: Error) => void
+  ): Unsubscribe => {
+    const col = collection(db, 'hotels', hotelId, 'orders');
+    const q = query(col, where('guestUid', '==', guestUid));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const orders: ServiceRequest[] = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          hotelId,
+          ...docSnap.data(),
+        })) as ServiceRequest[];
+        orders.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        onUpdate(orders);
+      },
+      (error) => {
+        console.error(`Error subscribing to guest orders for hotel ${hotelId}:`, error);
         if (onError) onError(error);
       }
     );
@@ -549,19 +612,6 @@ export const firestoreService = {
       },
       body: JSON.stringify({ email }),
     });
-  },
-
-  bootstrapSuperAdmin: async (email?: string, password?: string) => {
-    const response = await fetch('/api/auth/bootstrap-super-admin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to setup super admin');
-    }
-    return data;
   },
 
   /**

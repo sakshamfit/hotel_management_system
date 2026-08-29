@@ -1,6 +1,7 @@
 export type UserRole =
   | 'super_admin'
   | 'hotel_admin'
+  | 'guest'
   | 'SUPER_ADMIN'
   | 'HOTEL_ADMIN'
   | 'HOTEL_OWNER'
@@ -8,6 +9,19 @@ export type UserRole =
   | 'KITCHEN_STAFF'
   | 'HOUSEKEEPING_STAFF'
   | 'MAINTENANCE_STAFF';
+
+/**
+ * Scoped session issued to an anonymous Firebase Auth user after they scan a
+ * room QR code. The server sets these as custom claims — the client never
+ * decides them, and the room token is never accepted as proof of tenancy
+ * without a server round-trip.
+ */
+export interface GuestClaims {
+  role: 'guest';
+  hotelId: string;
+  roomId: string;
+  roomNumber: string;
+}
 
 export interface AuthClaims {
   role: 'super_admin' | 'hotel_admin';
