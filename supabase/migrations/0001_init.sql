@@ -17,49 +17,10 @@
 
 create extension if not exists pgcrypto;
 
--- ---------------------------------------------------------------------------
--- Auth helper functions (SECURITY DEFINER so they can read profiles/sessions
--- regardless of the caller's RLS)
--- ---------------------------------------------------------------------------
-
-create or replace function public.is_staff()
-returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (
-    select 1 from public.profiles p
-    where p.id = auth.uid() and p.role in ('super_admin', 'hotel_admin')
-  );
-$$;
-
-create or replace function public.is_super_admin()
-returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (
-    select 1 from public.profiles p
-    where p.id = auth.uid() and p.role = 'super_admin'
-  );
-$$;
-
--- The hotel_id of a hotel_admin, or NULL for super_admin (=> all hotels).
-create or replace function public.staff_hotel_id()
-returns uuid
-language sql stable security definer set search_path = public as $$
-  select p.hotel_id from public.profiles p
-  where p.id = auth.uid() and p.role = 'hotel_admin';
-$$;
-
--- True when a staff member may touch a row belonging to hotel `h`
--- (super_admin may touch every hotel).
-create or replace function public.staff_can_touch(h uuid)
-returns boolean
-language sql stable security definer set search_path = public as $$
-  select public.is_staff() and (
-    public.is_super_admin() or h = public.staff_hotel_id()
-  );
-$$;
-
--- NOTE: the guest helpers (active_guest_session, is_guest_in_hotel) are
--- created AFTER the tables section — they reference public.guest_sessions.
+-- NOTE: the auth-helper functions (is_staff, is_super_admin, staff_hotel_id,
+-- staff_can_touch, active_guest_session, is_guest_in_hotel) are defined AFTER
+-- the tables — they are LANGUAGE sql, whose bodies are validated at creation
+-- time, so the tables they reference must already exist.
 
 -- ===========================================================================
 -- TABLES
@@ -344,6 +305,48 @@ create table public.audit_logs (
   details    jsonb,
   created_at timestamptz not null default now()
 );
+
+-- ---------------------------------------------------------------------------
+-- Auth helper functions (SECURITY DEFINER so they read profiles/sessions
+-- regardless of the caller's RLS). Defined here — after every table exists —
+-- because LANGUAGE sql bodies are validated at creation time.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.is_staff()
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.profiles p
+    where p.id = auth.uid() and p.role in ('super_admin', 'hotel_admin')
+  );
+$$;
+
+create or replace function public.is_super_admin()
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.profiles p
+    where p.id = auth.uid() and p.role = 'super_admin'
+  );
+$$;
+
+-- The hotel_id of a hotel_admin, or NULL for super_admin (=> all hotels).
+create or replace function public.staff_hotel_id()
+returns uuid
+language sql stable security definer set search_path = public as $$
+  select p.hotel_id from public.profiles p
+  where p.id = auth.uid() and p.role = 'hotel_admin';
+$$;
+
+-- True when a staff member may touch a row belonging to hotel `h`
+-- (super_admin may touch every hotel).
+create or replace function public.staff_can_touch(h uuid)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_staff() and (
+    public.is_super_admin() or h = public.staff_hotel_id()
+  );
+$$;
 
 -- ---- Guest auth helpers (declared after guest_sessions exists) -------------
 create or replace function public.active_guest_session()
