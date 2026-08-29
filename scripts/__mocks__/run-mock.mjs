@@ -1,12 +1,14 @@
-// Test harness: runs the REAL migration script against the in-memory Firestore
-// mock seeded from scripts/__mocks__/seed.json.
+// Test harness: runs a REAL script (migration or source-cleanup) against the
+// in-memory Firestore mock seeded from scripts/__mocks__/seed.json.
 //
-//   node scripts/__mocks__/run-mock.mjs [args...] [-- <extra env>]
-//     env: MOCK_DUMP=/path/dump.json   (write final store state)
+//   node scripts/__mocks__/run-mock.mjs [--script migrate|fix] [args...]
+//     --dump <path>   (write final store state to a JSON file)
 //
-// Example:
+// Examples:
 //   node scripts/__mocks__/run-mock.mjs --report-values
 //   node scripts/__mocks__/run-mock.mjs --apply
+//   node scripts/__mocks__/run-mock.mjs --script fix
+//   node scripts/__mocks__/run-mock.mjs --script fix --apply --dump out.json
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -15,6 +17,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..', '..');
 
 const args = process.argv.slice(2);
+
+const scriptIdx = args.indexOf('--script');
+let script = 'migrate';
+if (scriptIdx !== -1) {
+  script = args[scriptIdx + 1];
+  args.splice(scriptIdx, 2);
+}
+const scriptFile =
+  script === 'fix' ? './scripts/fix-room-source-values.ts' : './scripts/migrate-reservations.ts';
+
 const dumpArgIdx = args.indexOf('--dump');
 let dumpPath;
 if (dumpArgIdx !== -1) {
@@ -35,7 +47,7 @@ const result = spawnSync(
     './scripts/__mocks__/register-hooks.mjs',
     '--import',
     'tsx',
-    './scripts/migrate-reservations.ts',
+    scriptFile,
     ...args,
   ],
   { cwd: repoRoot, env, stdio: 'inherit' }

@@ -87,7 +87,15 @@ npm run migrate:reservations -- --apply --hotel hotel_abc_123
 # Read-only: every distinct raw `type` and `status` string on rooms, with counts
 npm run report:room-values
 npm run migrate:reservations -- --report-values --hotel hotel_abc_123
+
+# Optional pre-migration cleanup of dirty SOURCE data (run before migrating):
+npm run fix:room-values                 # dry run — canonicalises status casing
+npm run fix:room-values -- --apply      #          and merges type label duplicates
 ```
+
+The full ordered go-live procedure (survey → clean source data → dry run →
+own the needs-review worklist → pilot one hotel → roll out) is in
+[migration-go-live-runbook.md](./migration-go-live-runbook.md).
 
 Per hotel it:
 

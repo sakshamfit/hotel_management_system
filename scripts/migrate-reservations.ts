@@ -35,6 +35,11 @@
  *                                             # `type`/`status` string + counts
  *   # (equivalent: npm run migrate:reservations -- --report-values [--hotel id])
  *
+ *   # If the report shows type-casing duplicates or ⚠ UNMAPPED statuses, fix
+ *   # the SOURCE data first (not this script) — see docs/migration-go-live-runbook.md:
+ *   npm run fix:room-values -- --apply        # canonicalise status casing,
+ *                                             # merge type label duplicates
+ *
  * Prerequisites
  * -------------
  *   export GOOGLE_APPLICATION_CREDENTIALS=/secure/path/sa.json

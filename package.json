@@ -12,6 +12,7 @@
     "create-super-admin": "tsx scripts/create-super-admin.ts",
     "migrate:reservations": "tsx scripts/migrate-reservations.ts",
     "report:room-values": "tsx scripts/migrate-reservations.ts --report-values",
+    "fix:room-values": "tsx scripts/fix-room-source-values.ts",
     "lint": "tsc --noEmit",
     "check:dates": "tsx scripts/check-dates.ts"
   },
