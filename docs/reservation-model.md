@@ -83,28 +83,56 @@ export GOOGLE_APPLICATION_CREDENTIALS=/secure/path/sa.json
 npm run migrate:reservations             # dry run
 npm run migrate:reservations -- --apply  # write
 npm run migrate:reservations -- --apply --hotel hotel_abc_123
+
+# Read-only: every distinct raw `type` and `status` string on rooms, with counts
+npm run report:room-values
+npm run migrate:reservations -- --report-values --hotel hotel_abc_123
 ```
 
 Per hotel it:
 
-1. Groups rooms by the legacy free-text `type` → one `roomTypes` doc per label
-   (`baseRate` = median `pricePerNight`, `maxOccupancy` = max `capacity`,
-   else defaults 150 / 2). A hotel with no type info gets one **"Standard"**
-   type.
+1. Groups rooms by the legacy free-text `type` (grouped by **slug**, so
+   `"Suite"`/`"suite"` merge into one `rt_suite` rather than two writes that
+   clobber each other) → one `roomTypes` doc (`baseRate` = median
+   `pricePerNight`, `maxOccupancy` = max `capacity`, else defaults 150 / 2;
+   display name = most common spelling). A hotel with no type info gets one
+   **"Standard"** type.
 2. Stamps `roomTypeId` on every room.
-3. Normalises status casing (`VACANT`→`available`, `OCCUPIED`→`occupied`).
-4. For each occupied room, creates a `guests` doc, a `CHECKED_IN` booking
-   (dates from `checkedInAt`/`expectedCheckout`, defaulting to 1 night), its
-   roomNights, and an OPEN folio.
+3. Normalises status casing (`VACANT`→`available`, `OCCUPIED`→`occupied`). Any
+   unmapped status (e.g. a typo) falls back to `available` and is surfaced by
+   `npm run report:room-values`.
+4. For each occupied room that **carries guest/stay fields**, creates a
+   `guests` doc, a `CHECKED_IN` booking (dates from `checkedInAt`/
+   `expectedCheckout`, defaulting to today→tomorrow; `agreedRate` = the room's
+   `pricePerNight`, else the inferred type rate, else 150), its roomNights, and
+   an OPEN folio.
 5. Deletes the guest fields from the room doc.
+
+**Dry run detail.** The dry run prints the *full* guest / booking / roomNights
+/ folio document payloads it would create for every occupied room (server
+timestamps shown as `<serverTimestamp() at write time>`, Firestore auto ids as
+`<auto-id…>`, roomNight ids are deterministic `{roomId}_{date}`), plus the room
+update with each deleted field marked `<FieldValue.delete()>` — not just a
+summary line.
+
+**Occupied rooms with no guest data are NOT guessed.** An occupied legacy room
+with *none* of the guest/stay fields is written to `needs-review.json` (repo
+root, git-ignored; generated in both dry-run and apply) and **no** guest,
+booking, roomNights or folio is created for it. The room still gets its
+`roomTypeId` and normalised status. Handle these manually — create the guest +
+CHECKED_IN booking through the app, which writes the roomNights locks and OPEN
+folio — because until a booking exists there are **no roomNights**, so the
+reservation engine considers the room bookable. Re-running leaves any room that
+already has a booking in the new model untouched.
 
 Removed from `Room`: `guestName`, `guestPhone`, `guestEmail`, `checkedInAt`,
 `expectedCheckout`, `lastCheckedOutAt`, `activeGuestSessionId`.
 (The schema named the first three; the other four are booking-derived and were
 removed for the same reason — say the word if you want any kept.)
 
-Re-runnable: rooms that already have `roomTypeId` and no guest fields are left
-alone, and existing room types are reused rather than duplicated.
+Re-runnable: rooms that already have a booking in the new model (or have
+`roomTypeId` and no guest fields and are not occupied) are left alone, and
+existing room types are reused rather than duplicated.
 
 ## Known gaps (deliberate — next iteration)
 

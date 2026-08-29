@@ -1,0 +1,80 @@
+{
+  "hotels": {
+    "hotel_a": { "name": "Grand Alpha", "currency": "USD" },
+    "hotel_b": { "name": "Beta Inn", "currency": "INR" }
+  },
+  "hotels/hotel_a/rooms": {
+    "room_a1": {
+      "roomNumber": "101",
+      "floor": 1,
+      "type": "Deluxe",
+      "status": "OCCUPIED",
+      "pricePerNight": 200,
+      "capacity": 2,
+      "guestName": "Ada Lovelace",
+      "guestPhone": "+1-555-0101",
+      "guestEmail": "ada@example.com",
+      "checkedInAt": "2026-08-27T14:00:00Z",
+      "expectedCheckout": "2026-08-30",
+      "activeGuestSessionId": "sess-xyz"
+    },
+    "room_a2": {
+      "roomNumber": "102",
+      "floor": 1,
+      "type": "Deluxe",
+      "status": "OCCUPIED",
+      "pricePerNight": 200,
+      "capacity": 2
+    },
+    "room_a3": {
+      "roomNumber": "103",
+      "floor": 1,
+      "type": "Suite",
+      "status": "VACANT",
+      "pricePerNight": 400,
+      "capacity": 4
+    },
+    "room_a4": {
+      "roomNumber": "104",
+      "floor": 1,
+      "type": "Suite",
+      "status": "available",
+      "pricePerNight": 400,
+      "capacity": 4,
+      "guestName": "Leftover Guest",
+      "guestPhone": "+1-555-0104",
+      "lastCheckedOutAt": "2026-08-20T11:00:00Z"
+    },
+    "room_a5": {
+      "roomNumber": "105",
+      "floor": 2,
+      "type": "suite",
+      "status": "occupied",
+      "guestName": "No Dates Guest"
+    },
+    "room_a6": {
+      "roomNumber": "106",
+      "floor": 2,
+      "status": "weird_status",
+      "type": ""
+    }
+  },
+  "hotels/hotel_b/rooms": {
+    "room_b1": {
+      "roomNumber": "B1",
+      "floor": 0,
+      "type": "Standard Room",
+      "status": "occupied",
+      "guestName": "Brij Patel",
+      "guestPhone": "+91-99999-00001",
+      "checkedInAt": "2026-08-28",
+      "expectedCheckout": "2026-08-29"
+    },
+    "room_b2": {
+      "roomNumber": "B2",
+      "floor": 0,
+      "type": "Standard Room",
+      "status": "cleaning"
+    }
+  }
+}

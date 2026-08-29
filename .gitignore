@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Migration output: manual worklist of occupied rooms with no guest data
+# (contains production guest/room info — never commit).
+needs-review.json

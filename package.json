@@ -11,6 +11,7 @@
     "clean": "rm -rf dist server.js",
     "create-super-admin": "tsx scripts/create-super-admin.ts",
     "migrate:reservations": "tsx scripts/migrate-reservations.ts",
+    "report:room-values": "tsx scripts/migrate-reservations.ts --report-values",
     "lint": "tsc --noEmit",
     "check:dates": "tsx scripts/check-dates.ts"
   },
