@@ -1,31 +1,54 @@
+import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { initializeApp, getApps } from 'firebase-admin/app';
-import { getAuth, UserRecord, DecodedIdToken } from 'firebase-admin/auth';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import firebaseConfigJson from './firebase-applet-config.json';
+import { createClient } from '@supabase/supabase-js';
 
-// Initialize Firebase Admin SDK
-if (!getApps().length) {
-  try {
-    initializeApp({
-      projectId: firebaseConfigJson.projectId || 'direct-citizen-1s6r9',
-    });
-    console.log('Firebase Admin SDK initialized successfully for project:', firebaseConfigJson.projectId);
-  } catch (err) {
-    console.error('Error initializing Firebase Admin SDK:', err);
-  }
+// ---------------------------------------------------------------------------
+// Supabase admin (service-role) client.
+// The service-role key bypasses RLS and is ONLY used server-side, never
+// shipped to the browser. Auth users are managed with admin APIs; the
+// browser/app still uses the anon key + RLS for its own reads and writes.
+// ---------------------------------------------------------------------------
+
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+const SUPABASE_SERVICE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+  console.warn(
+    '[server] SUPABASE url/service-role key missing. Set VITE_SUPABASE_URL and ' +
+      'SUPABASE_SERVICE_ROLE_KEY in .env (see .env.example). Guest/admin API routes will 503.'
+  );
 }
 
-const adminAuth = getAuth();
-const adminFirestore = getFirestore();
+const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  auth: { autoRefreshToken: false, persistSession: false },
+});
+
+/** Verify a Supabase JWT sent by the client and return its claims. */
+async function verifySupabaseJwt(token: string): Promise<{
+  uid: string;
+  email?: string;
+  role: string;
+  isAnonymous: boolean;
+} | null> {
+  const {
+    data: { user },
+    error,
+  } = await admin.auth.getUser(token);
+  if (error || !user) return null;
+  return {
+    uid: user.id,
+    email: user.email || undefined,
+    role: user.role || 'authenticated',
+    isAnonymous: (user as any).is_anonymous === true || !!user.app_metadata?.is_anonymous,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Rate limiting (per-instance, in-memory)
 // ---------------------------------------------------------------------------
-// Enough to make online guessing of room tokens / credential stuffing
-// impractical. For a multi-instance deployment back this with Redis/Firestore.
 interface RateBucket {
   count: number;
   resetAt: number;
@@ -37,7 +60,6 @@ function rateLimit(maxRequests: number, windowMs: number) {
     const key = `${req.ip || 'unknown'}:${req.path}`;
     const now = Date.now();
     const bucket = rateBuckets.get(key);
-
     if (!bucket || bucket.resetAt <= now) {
       rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
       next();
@@ -52,62 +74,60 @@ function rateLimit(maxRequests: number, windowMs: number) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /**
  * The CHECKED_IN booking currently occupying a room, if any.
- *
- * Uses a single equality filter (roomId) and filters status in code — a
- * composite (roomId + status) index would otherwise be required, and rooms
- * have few enough bookings for this to be cheap.
  */
 async function findActiveBooking(hotelId: string, roomId: string) {
-  const snap = await adminFirestore
-    .collection('hotels')
-    .doc(hotelId)
-    .collection('bookings')
-    .where('roomId', '==', roomId)
-    .limit(50)
-    .get();
-
-  const match = snap.docs.find((d) => d.data()?.status === 'CHECKED_IN');
-  if (!match) return null;
-  return { id: match.id, ...match.data() } as { id: string; guestId?: string; [key: string]: unknown };
+  const { data, error } = await admin
+    .from('bookings')
+    .select('id,guest_id,room_id,status')
+    .eq('hotel_id', hotelId)
+    .eq('room_id', roomId)
+    .order('check_in_date', { ascending: false })
+    .limit(50);
+  if (error) throw new Error(error.message);
+  return (data || []).find((b) => b.status === 'CHECKED_IN') || null;
 }
 
-/** Display name for the in-house guest, resolved from guests/{guestId}. */
+/** Display name for the in-house guest from guests/{guestId}. */
 async function resolveGuestName(hotelId: string, guestId?: string): Promise<string> {
   if (!guestId) return '';
   try {
-    const snap = await adminFirestore
-      .collection('hotels')
-      .doc(hotelId)
-      .collection('guests')
-      .doc(guestId)
-      .get();
-    return snap.exists ? String((snap.data() as { name?: string })?.name || '') : '';
+    const { data } = await admin
+      .from('guests')
+      .select('name')
+      .eq('hotel_id', hotelId)
+      .eq('id', guestId)
+      .maybeSingle();
+    return data?.name || '';
   } catch (err) {
     console.warn('Could not resolve guest name:', err);
     return '';
   }
 }
 
-// Middleware to verify Firebase ID token and super_admin claim
+/**
+ * Super-admin middleware. Supabase has no custom claims, so the role is read
+ * from the profiles row (service-role bypasses RLS).
+ */
 async function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
   }
-
-  const token = authHeader.split('Bearer ')[1];
   try {
-    const decodedToken = await adminAuth.verifyIdToken(token);
-    if (decodedToken.role !== 'super_admin') {
+    const claims = await verifySupabaseJwt(authHeader.split('Bearer ')[1]);
+    if (!claims) return res.status(401).json({ error: 'Invalid or expired token' });
+
+    const { data: profile } = await admin
+      .from('profiles')
+      .select('role')
+      .eq('id', claims.uid)
+      .maybeSingle();
+    if (profile?.role !== 'super_admin') {
       return res.status(403).json({ error: 'Forbidden: Super Admin privileges required' });
     }
-    (req as any).user = decodedToken;
+    (req as any).claims = claims;
     next();
   } catch (err: any) {
     console.error('Token verification error:', err);
@@ -115,37 +135,28 @@ async function requireSuperAdmin(req: Request, res: Response, next: NextFunction
   }
 }
 
+function requireSupabaseConfigured(res: Response): boolean {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    res.status(503).json({ error: 'Supabase is not configured on the server (missing service credentials).' });
+    return false;
+  }
+  return true;
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
-
-  // Small body cap: every API here takes a handful of string fields.
   app.use(express.json({ limit: '64kb' }));
 
-  // Health check
-  app.get('/api/health', (req: Request, res: Response) => {
-    res.json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      projectId: firebaseConfigJson.projectId,
-      firestoreDatabaseId: firebaseConfigJson.firestoreDatabaseId,
-    });
+  app.get('/api/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString(), backend: 'supabase' });
   });
 
   // -----------------------------------------------------------------------
-  // Guest session — exchange a room QR token for room-scoped custom claims.
-  //
-  // The ONLY way an unauthenticated visitor obtains any access. It:
-  //   • requires a valid Firebase ID token (the caller is signed in),
-  //   • refuses any caller that is not an anonymous user,
-  //   • refuses to downgrade or overwrite an existing staff role,
-  //   • resolves the token server-side, so the client can never enumerate
-  //     across tenants,
-  //   • grants only { role: 'guest', hotelId, roomId, roomNumber }.
-  //
-  // Super admins are NOT minted here — see scripts/create-super-admin.ts.
+  // Guest session — exchange a room QR token for a room-scoped session row.
   // -----------------------------------------------------------------------
   app.post('/api/guest/session', rateLimit(20, 60_000), async (req: Request, res: Response) => {
+    if (!requireSupabaseConfigured(res)) return;
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
@@ -157,63 +168,51 @@ async function startServer() {
     }
 
     try {
-      const decoded = await adminAuth.verifyIdToken(authHeader.split('Bearer ')[1]);
+      const claims = await verifySupabaseJwt(authHeader.split('Bearer ')[1]);
+      if (!claims) return res.status(401).json({ error: 'Invalid or expired token', code: 'guest/invalid-session' });
 
-      // Anonymous users only — never touch a real account's claims.
-      const isAnonymous = decoded.firebase?.sign_in_provider === 'anonymous';
-      if (!isAnonymous) {
+      // Anonymous guests only — never touch a staff account's scope.
+      if (!claims.isAnonymous) {
         return res.status(403).json({
           error: 'Only anonymous guest sessions can be scoped to a room.',
           code: 'guest/not-anonymous',
         });
       }
-      if (decoded.role) {
-        // A signed-in staff member must never be demoted to guest scope.
-        return res.status(403).json({
-          error: 'This session already holds a staff role.',
-          code: 'guest/already-roled',
-        });
+
+      // Resolve token → room server-side (collection-group equivalent: scan by
+      // permanent_token, which is globally unique + indexed).
+      const { data: room } = await admin
+        .from('rooms')
+        .select('id,hotel_id,room_number')
+        .eq('permanent_token', roomToken)
+        .maybeSingle();
+
+      if (!room) {
+        return res.status(404).json({ error: 'This room code is not recognised.', code: 'guest/unknown-room' });
       }
+      const hotelId = room.hotel_id as string;
+      const roomId = room.id as string;
+      const roomNumber = (room.room_number as string) || '';
 
-      // Resolve the token across every hotel (Admin SDK bypasses rules; the
-      // client could not perform this collection-group query itself).
-      const snap = await adminFirestore
-        .collectionGroup('rooms')
-        .where('permanentToken', '==', roomToken)
-        .limit(1)
-        .get();
-
-      if (snap.empty) {
-        return res.status(404).json({
-          error: 'This room code is not recognised.',
-          code: 'guest/unknown-room',
-        });
-      }
-
-      const roomDoc = snap.docs[0];
-      const hotelRef = roomDoc.ref.parent.parent;
-      if (!hotelRef) {
-        return res.status(404).json({ error: 'Malformed room reference.', code: 'guest/unknown-room' });
-      }
-      const roomData = roomDoc.data();
-      const hotelId = hotelRef.id;
-      const roomId = roomDoc.id;
-      const roomNumber = typeof roomData.roomNumber === 'string' ? roomData.roomNumber : '';
-
-      // The guest portal greets the in-house guest by name, but guests have no
-      // read access to bookings or guests (they carry other people's PII). So
-      // the server resolves the name once and hands it over as a display-only
-      // claim instead of granting a collection read.
       const booking = await findActiveBooking(hotelId, roomId);
-      const guestName = booking?.guestId ? await resolveGuestName(hotelId, booking.guestId) : '';
+      const guestName = booking?.guest_id ? await resolveGuestName(hotelId, booking.guest_id) : '';
 
-      await adminAuth.setCustomUserClaims(decoded.uid, {
-        role: 'guest',
-        hotelId,
-        roomId,
-        roomNumber,
-        guestName: guestName || '',
-      });
+      // Upsert the room-scoped session (replaces custom claims). Re-activating a
+      // session re-points it at the room of the newly scanned token.
+      const { error: sessionErr } = await admin
+        .from('guest_sessions')
+        .upsert(
+          {
+            id: claims.uid,
+            hotel_id: hotelId,
+            room_id: roomId,
+            room_number: roomNumber,
+            guest_name: guestName || '',
+            active: true,
+          },
+          { onConflict: 'id' }
+        );
+      if (sessionErr) throw new Error(sessionErr.message);
 
       return res.json({ success: true, hotelId, roomId, roomNumber, guestName: guestName || '' });
     } catch (err: any) {
@@ -223,119 +222,44 @@ async function startServer() {
   });
 
   // -----------------------------------------------------------------------
-  // Folio charge for a guest order.
-  //
-  // Req 4: an order placed in a room with an active CHECKED_IN booking raises
-  // a FOOD/SERVICE charge on that booking's folio. Guests have no Firestore
-  // access to folios at all (see firestore.rules), so this runs through the
-  // Admin SDK. The order pipeline itself is untouched — the client calls this
-  // after its normal order write succeeds.
+  // Folio charge for a guest order (runs the post_guest_order_charge RPC).
+  // We re-create a client BOUND TO THE GUEST'S JWT so the SECURITY DEFINER
+  // RPC sees auth.uid() = the guest and the RLS helpers work; the service
+  // client alone would report no auth.uid().
   // -----------------------------------------------------------------------
   app.post(
     '/api/guest/orders/:orderId/charge',
     rateLimit(60, 60_000),
     async (req: Request, res: Response) => {
+      if (!requireSupabaseConfigured(res)) return;
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
       }
-
       const orderId = String(req.params.orderId || '').trim();
       if (!orderId || orderId.length > 128) {
         return res.status(400).json({ error: 'A valid order id is required.' });
       }
 
-      let decoded: DecodedIdToken;
-      try {
-        decoded = await adminAuth.verifyIdToken(authHeader.split('Bearer ')[1]);
-      } catch (err: any) {
-        // A bad/expired token is an auth failure, not a server error.
+      const token = authHeader.split('Bearer ')[1];
+      const claims = await verifySupabaseJwt(token);
+      if (!claims) {
         return res.status(401).json({ error: 'Invalid or expired token', code: 'guest/invalid-session' });
+      }
+      if (!claims.isAnonymous) {
+        return res.status(403).json({ error: 'Not a room-scoped guest session.', code: 'guest/not-scoped' });
       }
 
       try {
-        // Guest scope only, and only for the room this session was granted.
-        if (
-          decoded.firebase?.sign_in_provider !== 'anonymous' ||
-          decoded.role !== 'guest' ||
-          !decoded.hotelId ||
-          !decoded.roomId
-        ) {
-          return res.status(403).json({ error: 'Not a room-scoped guest session.', code: 'guest/not-scoped' });
-        }
-
-        const hotelId = String(decoded.hotelId);
-        const roomId = String(decoded.roomId);
-
-        const orderSnap = await adminFirestore
-          .collection('hotels')
-          .doc(hotelId)
-          .collection('orders')
-          .doc(orderId)
-          .get();
-
-        if (!orderSnap.exists) return res.status(404).json({ error: 'Order not found.' });
-
-        const order = orderSnap.data() as {
-          guestUid?: string;
-          roomId?: string;
-          type?: string;
-          totalAmount?: number;
-          items?: Array<{ name?: string; quantity?: number }>;
-        };
-
-        // A guest may only raise charges from their own orders, for their own room.
-        if (order.guestUid !== decoded.uid || (order.roomId && order.roomId !== roomId)) {
-          return res.status(403).json({ error: 'Order does not belong to this session.', code: 'guest/forbidden' });
-        }
-
-        const amount = Number(order.totalAmount || 0);
-        if (!Number.isFinite(amount) || amount <= 0) {
-          return res.json({ linked: false, reason: 'zero-amount' });
-        }
-
-        const booking = await findActiveBooking(hotelId, roomId);
-        if (!booking) {
-          return res.json({ linked: false, reason: 'no-active-booking' });
-        }
-
-        const folioRef = adminFirestore.collection('hotels').doc(hotelId).collection('folios').doc(booking.id);
-        const chargesRef = folioRef.collection('charges');
-
-        // Idempotent: one charge per order, no matter how often this is called.
-        const existing = await chargesRef.where('sourceOrderId', '==', orderId).limit(1).get();
-        if (!existing.empty) {
-          return res.json({ linked: true, reason: 'already-linked' });
-        }
-
-        const description =
-          order.items && order.items.length > 0
-            ? order.items
-                .map((i) => `${i.quantity || 1}x ${i.name || 'Item'}`)
-                .join(', ')
-                .slice(0, 200)
-            : order.type === 'service'
-              ? 'Room service request'
-              : 'In-room dining order';
-
-        await adminFirestore.runTransaction(async (tx) => {
-          const folioSnap = await tx.get(folioRef);
-          tx.set(chargesRef.doc(), {
-            type: order.type === 'service' ? 'SERVICE' : 'FOOD',
-            description,
-            amount,
-            sourceOrderId: orderId,
-            createdAt: FieldValue.serverTimestamp(),
-          });
-          if (folioSnap.exists) {
-            tx.update(folioRef, { balance: FieldValue.increment(amount) });
-          } else {
-            // Booking created before folios existed — create it on demand.
-            tx.set(folioRef, { bookingId: booking.id, status: 'OPEN', balance: amount });
-          }
+        const guestClient = createClient(SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY || '', {
+          global: { headers: { Authorization: `Bearer ${token}` } },
+          auth: { persistSession: false, autoRefreshToken: false },
         });
-
-        return res.json({ linked: true });
+        const { data, error } = await guestClient.rpc('post_guest_order_charge', { p_order_id: orderId });
+        if (error) {
+          return res.status(500).json({ error: error.message || 'Could not post the charge.' });
+        }
+        return res.json(data || { linked: false });
       } catch (err: any) {
         console.error('Order charge error:', err);
         return res.status(500).json({ error: err?.message || 'Could not post the charge.' });
@@ -343,72 +267,76 @@ async function startServer() {
     }
   );
 
-  // Create Hotel Admin User via Firebase Admin SDK
-  // This endpoint creates the Firebase Auth user without logging out the currently signed-in Super Admin
-  // and attaches the custom claim { role: "hotel_admin", hotelId: <hotelDocId> }
+  // -----------------------------------------------------------------------
+  // Create hotel admin user (super admin). Creates the Auth user + profile +
+  // hotel ownership. Email confirmations are bypassed (the super admin sets a
+  // password directly), matching the old Admin-SDK flow.
+  // -----------------------------------------------------------------------
   app.post('/api/admin/create-hotel-user', requireSuperAdmin, async (req: Request, res: Response) => {
-    const { hotelId, hotelName, email, password, name, phone } = req.body;
-
+    if (!requireSupabaseConfigured(res)) return;
+    const { hotelId, hotelName, email, password, name, phone } = req.body || {};
     if (!hotelId || !email || !password) {
       return res.status(400).json({ error: 'Missing required parameters: hotelId, email, and password' });
     }
-
-    const trimmedEmail = email.toLowerCase().trim();
-    if (password.length < 6) {
+    const trimmedEmail = String(email).toLowerCase().trim();
+    if (String(password).length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters long' });
     }
 
     try {
-      let userRecord: UserRecord;
+      // Existing user? update password + name; otherwise create.
+      let uid: string;
       let isNew = false;
+      const { data: existing } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      const found = (existing?.users || []).find((u) => (u.email || '').toLowerCase() === trimmedEmail);
 
-      try {
-        userRecord = await adminAuth.getUserByEmail(trimmedEmail);
-        // Update password & name
-        userRecord = await adminAuth.updateUser(userRecord.uid, {
+      if (found) {
+        uid = found.id;
+        const { error: updErr } = await admin.auth.admin.updateUserById(uid, {
           password,
-          displayName: name || `${hotelName} Admin`,
+          email_confirm: true,
+          user_metadata: { display_name: name || `${hotelName} Admin`, ...(phone ? { phone } : {}) },
         });
-      } catch (notFound: any) {
-        // Create new user in Firebase Auth
-        userRecord = await adminAuth.createUser({
+        if (updErr) throw updErr;
+      } else {
+        const { data: created, error: createErr } = await admin.auth.admin.createUser({
           email: trimmedEmail,
           password,
-          displayName: name || `${hotelName} Admin`,
-          phoneNumber: phone && phone.startsWith('+') ? phone : undefined,
-          emailVerified: true,
+          email_confirm: true,
+          user_metadata: { display_name: name || `${hotelName} Admin`, ...(phone ? { phone } : {}) },
         });
+        if (createErr || !created?.user) throw createErr || new Error('User creation failed');
+        uid = created.user.id;
         isNew = true;
       }
 
-      // Set Custom Claims: { role: 'hotel_admin', hotelId }
-      await adminAuth.setCustomUserClaims(userRecord.uid, {
-        role: 'hotel_admin',
-        hotelId,
-      });
+      // Role lives in profiles (replaces custom claims + users/{uid}).
+      const { error: profileErr } = await admin
+        .from('profiles')
+        .upsert(
+          {
+            id: uid,
+            role: 'hotel_admin',
+            hotel_id: hotelId,
+            email: trimmedEmail,
+            display_name: name || `${hotelName} Admin`,
+            phone: phone || '',
+          },
+          { onConflict: 'id' }
+        );
+      if (profileErr) throw profileErr;
 
-      // Persist role in Firestore users/{uid} so client-side role lookup works
-      // (free tier: role lives in Firestore, token may not carry custom claims yet).
-      await adminFirestore.collection('users').doc(userRecord.uid).set(
-        {
-          role: 'hotel_admin',
-          hotelId,
-          email: trimmedEmail,
-          displayName: name || `${hotelName} Admin`,
-          phone: phone || '',
-          createdAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      // Ensure the hotel points back at this login email (best effort).
+      await admin.from('hotels').update({ login_email: trimmedEmail }).eq('id', hotelId);
 
       return res.json({
         success: true,
         isNew,
-        uid: userRecord.uid,
-        email: userRecord.email,
+        uid,
+        email: trimmedEmail,
         hotelId,
         role: 'hotel_admin',
-        message: `Hotel Admin ${trimmedEmail} successfully created/updated with custom claim for hotelId: ${hotelId}`,
+        message: `Hotel admin ${trimmedEmail} created/updated for hotel ${hotelId}`,
       });
     } catch (err: any) {
       console.error('Error creating hotel admin user:', err);
@@ -416,54 +344,54 @@ async function startServer() {
     }
   });
 
-  // Delete Hotel Admin User
   app.post('/api/admin/delete-hotel-user', requireSuperAdmin, async (req: Request, res: Response) => {
-    const { email } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'Email is required' });
-    }
-
+    if (!requireSupabaseConfigured(res)) return;
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'Email is required' });
     try {
-      const userRecord = await adminAuth.getUserByEmail(email.toLowerCase().trim());
-
-      // Remove the Firestore role document too (best effort)
-      try {
-        await adminFirestore.collection('users').doc(userRecord.uid).delete();
-      } catch (firestoreErr: any) {
-        console.warn('Could not delete users/{uid} role doc:', firestoreErr.message);
+      const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      const found = (list?.users || []).find((u) => (u.email || '').toLowerCase() === String(email).toLowerCase().trim());
+      if (found) {
+        await admin.from('profiles').delete().eq('id', found.id);
+        await admin.auth.admin.deleteUser(found.id);
       }
-
-      await adminAuth.deleteUser(userRecord.uid);
-      return res.json({ success: true, message: `User ${email} deleted from Firebase Auth` });
+      return res.json({ success: true, message: 'User deleted (or was already absent).' });
     } catch (err: any) {
-      // If user not found, treat as already deleted
-      return res.json({ success: true, message: 'User not found or already deleted' });
+      return res.status(500).json({ error: err.message || 'Failed to delete user' });
     }
   });
 
-  // Set Custom Claims Endpoint (Super Admin only)
   app.post(
     '/api/admin/set-user-claims',
     requireSuperAdmin,
     rateLimit(30, 60_000),
     async (req: Request, res: Response) => {
-    const { email, role, hotelId } = req.body;
-    if (!email || !role) {
-      return res.status(400).json({ error: 'Email and role are required' });
-    }
+      if (!requireSupabaseConfigured(res)) return;
+      const { email, role, hotelId } = req.body || {};
+      if (!email || !role) return res.status(400).json({ error: 'Email and role are required' });
+      try {
+        const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+        const found = (list?.users || []).find(
+          (u) => (u.email || '').toLowerCase() === String(email).toLowerCase().trim()
+        );
+        if (!found) return res.status(404).json({ error: 'User not found' });
 
-    try {
-      const userRecord = await adminAuth.getUserByEmail(email.toLowerCase().trim());
-      const claims: Record<string, any> = { role };
-      if (role === 'hotel_admin' && hotelId) {
-        claims.hotelId = hotelId;
+        const { error } = await admin
+          .from('profiles')
+          .upsert(
+            {
+              id: found.id,
+              role: role === 'super_admin' ? 'super_admin' : 'hotel_admin',
+              hotel_id: role === 'hotel_admin' && hotelId ? hotelId : null,
+              email: found.email,
+            },
+            { onConflict: 'id' }
+          );
+        if (error) throw error;
+        return res.json({ success: true, uid: found.id, claims: { role, hotelId } });
+      } catch (err: any) {
+        return res.status(500).json({ error: err.message || 'Failed to set role' });
       }
-
-      await adminAuth.setCustomUserClaims(userRecord.uid, claims);
-      return res.json({ success: true, uid: userRecord.uid, claims });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message || 'Failed to set claims' });
-    }
     }
   );
 
@@ -477,13 +405,13 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*', (_req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`NEXORA HOTEL OS Server running at http://0.0.0.0:${PORT}`);
+    console.log(`NEXORA HOTEL OS server running at http://0.0.0.0:${PORT} (Supabase backend)`);
   });
 }
 

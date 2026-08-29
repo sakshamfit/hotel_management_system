@@ -307,7 +307,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
             </div>
             <h2 className="t-display-md">{revealedCredentials.hotelName} is live</h2>
             <p className="t-caption text-ink-mute">
-              The hotel admin account was created in Firebase Auth. Save the password now — it will
+              The hotel admin account was created in Supabase Auth. Save the password now — it will
               not be shown again.
             </p>
           </div>
@@ -346,7 +346,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
 
             <p className="t-micro text-ink-faint flex items-center gap-1.5">
               <Lock className="w-3 h-3" />
-              Stored only in Firebase Auth — never in the database.
+              Stored only in Supabase Auth — never in the database.
             </p>
           </div>
 
@@ -688,7 +688,7 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
               <div className="p-3.5 bg-[#e7efee] border border-[#c9dcd9] rounded-lg text-xs text-[#0e3030] space-y-1">
                 <div className="font-bold flex items-center gap-1.5 text-[#0e3030]">
                   <CheckCircle2 className="w-4 h-4 text-[#155555]" />
-                  <span>Secure Firebase Auth User Creation</span>
+                  <span>Secure Admin User Creation</span>
                 </div>
                 <p>
                   This will provision a Firebase Auth user with custom claim <code className="bg-[#dce7e5] px-1 py-0.5 rounded font-mono text-[11px]">{`{ role: "hotel_admin", hotelId }`}</code> using Firebase Admin SDK.

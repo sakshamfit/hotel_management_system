@@ -34,15 +34,19 @@ export const LoginPage: React.FC = () => {
       let msg = err.message || 'Invalid email or password. Please check your credentials.';
       if (
         msg.includes('identitytoolkit.googleapis.com') ||
-        msg.includes('Identity Toolkit API') ||
-        err.code === 'auth/configuration-not-found' ||
-        err.code === 'auth/operation-not-allowed'
+        msg.includes('Identity Toolkit API')
       ) {
         setIsIdentityToolkitError(true);
-        msg = 'Firebase Identity Toolkit API is pending activation on Google Cloud project. Please enable it to authenticate with Firebase.';
-      } else if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        msg = 'Authentication is not configured yet. Please verify the Supabase credentials in the environment.';
+      } else if (
+        err.code === 'auth/user-not-found' ||
+        err.code === 'auth/wrong-password' ||
+        err.code === 'auth/invalid-credential' ||
+        err.code === 'invalid_credentials' ||
+        err.message?.includes('Invalid login credentials')
+      ) {
         msg = 'Invalid email or password. If this is a newly created hotel, please verify the exact email and password set by the Super Admin.';
-      } else if (err.code === 'auth/too-many-requests') {
+      } else if (err.code === 'auth/too-many-requests' || err.code === 'over_email_send_rate_limit') {
         msg = 'Too many failed login attempts. Please wait a moment and try again.';
       }
       setErrorMessage(msg);
@@ -128,7 +132,7 @@ export const LoginPage: React.FC = () => {
             {/* Hero footer stats */}
             <div className="flex items-center gap-6 text-on-dark-faint">
               <span className="t-micro uppercase tracking-wider">Cloud Multi-Tenant</span>
-              <span className="hidden sm:inline t-micro uppercase tracking-wider">Firestore Isolated</span>
+              <span className="hidden sm:inline t-micro uppercase tracking-wider">Supabase Isolated</span>
               <span className="inline-flex items-center gap-1.5 t-micro text-on-dark-mute">
                 <span className="w-1.5 h-1.5 rounded-full bg-violet-soft animate-pulse" />
                 Secured
@@ -226,7 +230,7 @@ export const LoginPage: React.FC = () => {
                   className="btn-primary-dark w-full py-3"
                 >
                   {loading ? (
-                    <span>Authenticating with Firebase…</span>
+                    <span>Authenticating…</span>
                   ) : (
                     <>
                       <span>Sign In with Password</span>
@@ -285,7 +289,7 @@ export const LoginPage: React.FC = () => {
           <div className="space-y-1.5">
             <h3 className="t-display-lg text-on-primary">Every stay, quietly orchestrated.</h3>
             <p className="t-caption text-white/60">
-              NEXORA HOTEL OS • Firebase Auth &amp; Multi-Tenant Firestore
+              NEXORA HOTEL OS • Supabase Auth &amp; Multi-Tenant Postgres
             </p>
           </div>
           <button

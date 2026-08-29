@@ -178,7 +178,7 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
             <div className="flex items-center gap-2">
               <h2 className="t-display-md">Restaurant & F&B Menu</h2>
               <span className="bg-[#e7efee] text-[#0e3030] border border-[#c9dcd9] text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full font-bold">
-                Firestore Synced
+                Supabase Synced
               </span>
             </div>
             <p className="text-xs text-[#73706d]">
@@ -239,7 +239,7 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
       {loading ? (
         <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center">
           <div className="w-8 h-8 border-2 border-[#1b1938] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-[#73706d] mt-3">Loading menu items from Firestore...</p>
+          <p className="text-xs text-[#73706d] mt-3">Loading menu items…</p>
         </div>
       ) : filteredItems.length === 0 ? (
         <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center space-y-4 shadow-xs">
