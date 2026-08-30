@@ -7,6 +7,9 @@ coverage/
 .env*
 !.env.example
 
+# Demo-mode uploads (local backend fallback; not part of the repo)
+.demo-uploads/
+
 # Supabase
 supabase/.branches
 supabase/.temp

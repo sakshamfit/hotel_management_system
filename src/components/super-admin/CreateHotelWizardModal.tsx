@@ -159,8 +159,9 @@ export const CreateHotelWizardModal: React.FC<Props> = ({ isOpen, onClose, onSuc
       const currencySymbol =
         currency === 'USD' ? '$' : currency === 'EUR' ? '€' : currency === 'AED' ? 'AED ' : currency === 'GBP' ? '£' : '₹';
 
-      // Generate a normalized document ID
-      const hotelId = `hotel_${hotelCode.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now().toString(36)}`;
+      // Generate the tenant id. Must be a UUID: hotels.id (and every FK
+      // hotel_id / profile.hotel_id) is a `uuid` column in Postgres.
+      const hotelId = crypto.randomUUID();
 
       // 1. Save hotel document to Firestore (hotels/{hotelId})
       await firestoreService.createHotelDoc(hotelId, {

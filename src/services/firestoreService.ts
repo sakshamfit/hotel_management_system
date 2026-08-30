@@ -8,7 +8,7 @@
  *
  * Tables (snake_case) map to camelCase app objects in src/services/db.ts.
  */
-import { supabase } from '../supabase/config';
+import { supabase, demoBackend } from '../supabase/config';
 import {
   subscribeTable,
   subscribeRow,
@@ -104,11 +104,13 @@ export const firestoreService = {
   getHotel: (hotelId: string) => fetchRow<Hotel>('hotels', hotelId) as Promise<Hotel | null>,
 
   createHotelDoc: async (hotelId: string, data: Omit<Hotel, 'id'>): Promise<string> => {
-    // Caller provides a pre-generated uid (from the hotel Auth user); insert
-    // with that id by passing it explicitly.
+    // Caller provides a pre-generated id (UUID — hotels.id is a uuid column);
+    // insert with that id by passing it explicitly. adminCredentials is a UI
+    // convenience and has no hotels table column (login_email holds the email).
+    const { adminCredentials: _adminCredentials, ...row } = data as Record<string, any>;
     const { error } = await supabase
       .from('hotels')
-      .insert({ id: hotelId, ...{ ...(data as object) }, created_at: new Date().toISOString() });
+      .insert({ id: hotelId, ...row, created_at: new Date().toISOString() });
     if (error) throw new Error(error.message);
     return hotelId;
   },
@@ -556,13 +558,21 @@ export const firestoreService = {
    * post_guest_order_charge() RPC. Advisory — failures never block the order.
    */
   linkOrderCharge: async (orderId: string): Promise<{ linked: boolean; reason?: string }> => {
-    const { data: session } = await supabase.auth.getSession();
-    if (!session?.session?.access_token) return { linked: false, reason: 'no-session' };
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) return { linked: false, reason: 'no-session' };
+
+    // Demo mode: post the folio charge locally (mirrors post_guest_order_charge RPC).
+    if (demoBackend) {
+      const result = await demoBackend.postGuestOrderCharge(orderId);
+      return { linked: !!result.linked, reason: result.reason };
+    }
 
     try {
       const response = await fetch(`/api/guest/orders/${encodeURIComponent(orderId)}/charge`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${session.session.access_token}` },
+        headers: { Authorization: `Bearer ${session.access_token}` },
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) return { linked: false, reason: data?.code || `http-${response.status}` };
@@ -583,15 +593,23 @@ export const firestoreService = {
     name?: string,
     phone?: string
   ) => {
-    const { data: session } = await supabase.auth.getSession();
-    if (!session?.session?.access_token) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
       throw new Error('Not authenticated. Please sign in as Super Admin.');
     }
+
+    // Demo mode: create the auth user + profile locally (service-role stand-in).
+    if (demoBackend) {
+      return demoBackend.createHotelUser({ hotelId, hotelName, email, password, name, phone });
+    }
+
     const response = await fetch('/api/admin/create-hotel-user', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.session.access_token}`,
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({ hotelId, hotelName, email, password, name, phone }),
     });
@@ -601,13 +619,19 @@ export const firestoreService = {
   },
 
   deleteHotelUserAuth: async (email: string) => {
-    const { data: session } = await supabase.auth.getSession();
-    if (!session?.session?.access_token) return;
+    if (demoBackend) {
+      await demoBackend.deleteHotelUser(email);
+      return;
+    }
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
     await fetch('/api/admin/delete-hotel-user', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.session.access_token}`,
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({ email }),
     });
@@ -615,6 +639,10 @@ export const firestoreService = {
 
   /** Emails a password reset link (Supabase Auth; the raw password is never stored). */
   sendHotelPasswordReset: async (email: string) => {
+    if (demoBackend) {
+      // No mail provider in demo mode — passwords are managed by the admin UI.
+      return;
+    }
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${window.location.origin}/`,
     });

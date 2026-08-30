@@ -1,4 +1,4 @@
-import { supabase } from '../supabase/config';
+import { supabase, isDemoMode } from '../supabase/config';
 
 /**
  * Image uploads — Supabase Storage, bucket `hotel-media`.
@@ -54,15 +54,22 @@ export async function uploadImage({ file, path, onProgress }: UploadOptions): Pr
   const validationError = validateImageFile(file);
   if (validationError) throw new Error(validationError);
 
-  const { data: session } = await supabase.auth.getSession();
-  const token = session?.session?.access_token;
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const token = session?.access_token;
 
   const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(path);
   const publicUrl = urlData.publicUrl;
 
+  const cleanPath = path.replace(/^\/+/, '');
+
   await new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${supabaseUrl()}/storage/v1/object/${BUCKET}/${path.replace(/^\//, '')}`);
+    const demoUploadUrl = isDemoMode
+      ? `/demo-storage/upload/${cleanPath}` // served by server.ts in demo mode
+      : `${supabaseUrl()}/storage/v1/object/${BUCKET}/${cleanPath}`;
+    xhr.open('POST', demoUploadUrl);
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.setRequestHeader('x-upsert', 'true');
@@ -88,12 +95,14 @@ function supabaseUrl(): string {
   return (import.meta.env.VITE_SUPABASE_URL as string).replace(/\/$/, '');
 }
 
-/** True when a URL points at this Supabase Storage bucket. */
+/** True when a URL points at this Supabase Storage bucket (or the demo store). */
 function isSupabaseStorageUrl(url: string): boolean {
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(url, window.location.origin);
     const base = (import.meta.env.VITE_SUPABASE_URL as string) || '';
-    return parsed.href.includes('/storage/v1/object/') || (!!base && parsed.host === new URL(base).host);
+    return (
+      isDemoMode && parsed.pathname.includes('/demo-storage/')
+    ) || parsed.href.includes('/storage/v1/object/') || (!!base && parsed.host === new URL(base).host);
   } catch {
     return false;
   }
@@ -102,11 +111,15 @@ function isSupabaseStorageUrl(url: string): boolean {
 /** Extracts the object path within the bucket from a public/rendered URL. */
 function objectPathFromUrl(url: string): string | null {
   try {
-    const parsed = new URL(url);
-    const marker = `/storage/v1/object/public/${BUCKET}/`;
-    const idx = parsed.pathname.indexOf(marker);
-    if (idx === -1) return null;
-    return decodeURIComponent(parsed.pathname.slice(idx + marker.length));
+    const parsed = new URL(url, window.location.origin);
+    const markers = isDemoMode
+      ? ['/demo-storage/']
+      : [`/storage/v1/object/public/${BUCKET}/`, `/storage/v1/object/${BUCKET}/`];
+    for (const marker of markers) {
+      const idx = parsed.pathname.indexOf(marker);
+      if (idx !== -1) return decodeURIComponent(parsed.pathname.slice(idx + marker.length));
+    }
+    return null;
   } catch {
     return null;
   }

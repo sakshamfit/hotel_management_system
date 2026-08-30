@@ -4,7 +4,25 @@ This app runs entirely on **Supabase**: Postgres + Row Level Security (data),
 Realtime (live updates), Supabase Auth (staff email/password + anonymous QR
 guests), and Supabase Storage (images). There is no Firebase dependency left.
 
-## 1. Create the project
+## 0. No credentials? Demo mode (zero setup)
+
+If `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are missing or still
+contain the `.env.example` placeholders, the app automatically runs on a
+**local demo backend** (`src/supabase/localBackend.ts`) — an in-memory store
+persisted to localStorage that implements the same query/auth/realtime surface
+the app uses, so every screen works with zero setup:
+
+- **Super Admin** — `admin@nexora.test` / `nexora123`
+- **Hotel Admin** — `admin@grandplaza.demo` / `nexora123`
+- **Guest portal** — open `/?token=tok-demo-101` (Room 101 is checked in, with
+  a folio, menu and live requests)
+- Image uploads are stored under `.demo-uploads/` and served by the dev server.
+
+Demo mode is visible as a **Demo** badge in the header and a demo panel on the
+login screen. It is never active once real credentials are configured below —
+the demo users and seeded data only exist inside the local store.
+
+## 1. Create the project (only for going live)
 
 1. Create a Supabase project (supabase.com → New project). Note the project
    URL and database password.

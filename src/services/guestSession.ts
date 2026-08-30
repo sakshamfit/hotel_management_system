@@ -1,4 +1,4 @@
-import { supabase } from '../supabase/config';
+import { supabase, demoBackend } from '../supabase/config';
 import type { GuestClaims } from '../types';
 
 /**
@@ -40,7 +40,23 @@ export class GuestSessionError extends Error {
 
 const sessionCache = new Map<string, GuestSessionInfo>();
 
-async function exchangeRoomToken(roomToken: string, accessToken: string): Promise<GuestClaims> {
+async function exchangeRoomToken(roomToken: string, uid: string, accessToken: string): Promise<GuestClaims> {
+  // Demo mode: the room token is resolved against the local seed/store — no
+  // server round-trip (in demo mode server admin/guest routes are not wired).
+  if (demoBackend) {
+    const claims = demoBackend.openGuestSession(roomToken, uid);
+    if (!claims) {
+      throw new GuestSessionError('This room code is not recognised.', 'guest/unknown-room');
+    }
+    return {
+      role: 'guest',
+      hotelId: claims.hotelId,
+      roomId: claims.roomId,
+      roomNumber: claims.roomNumber,
+      guestName: typeof claims.guestName === 'string' ? claims.guestName : '',
+    };
+  }
+
   const response = await fetch('/api/guest/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
@@ -111,7 +127,7 @@ export async function ensureGuestSession(roomToken: string): Promise<GuestSessio
   const cached = sessionCache.get(cacheKey);
   if (cached) return cached;
 
-  const claims = await exchangeRoomToken(roomToken, accessToken);
+  const claims = await exchangeRoomToken(roomToken, uid, accessToken);
 
   const session: GuestSessionInfo = { ...claims, uid };
   sessionCache.set(cacheKey, session);
