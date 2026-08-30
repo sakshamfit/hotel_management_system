@@ -1,4 +1,4 @@
-import { supabase, isDemoMode } from '../supabase/config';
+import { supabase, supabaseProjectUrl } from '../supabase/config';
 
 /**
  * Image uploads — Supabase Storage, bucket `hotel-media`.
@@ -66,10 +66,7 @@ export async function uploadImage({ file, path, onProgress }: UploadOptions): Pr
 
   await new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const demoUploadUrl = isDemoMode
-      ? `/demo-storage/upload/${cleanPath}` // served by server.ts in demo mode
-      : `${supabaseUrl()}/storage/v1/object/${BUCKET}/${cleanPath}`;
-    xhr.open('POST', demoUploadUrl);
+    xhr.open('POST', `${supabaseProjectUrl}/storage/v1/object/${BUCKET}/${cleanPath}`);
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.setRequestHeader('x-upsert', 'true');
@@ -91,18 +88,14 @@ export async function uploadImage({ file, path, onProgress }: UploadOptions): Pr
   return publicUrl;
 }
 
-function supabaseUrl(): string {
-  return (import.meta.env.VITE_SUPABASE_URL as string).replace(/\/$/, '');
-}
-
-/** True when a URL points at this Supabase Storage bucket (or the demo store). */
+/** True when a URL points at this Supabase Storage bucket. */
 function isSupabaseStorageUrl(url: string): boolean {
   try {
     const parsed = new URL(url, window.location.origin);
-    const base = (import.meta.env.VITE_SUPABASE_URL as string) || '';
     return (
-      isDemoMode && parsed.pathname.includes('/demo-storage/')
-    ) || parsed.href.includes('/storage/v1/object/') || (!!base && parsed.host === new URL(base).host);
+      parsed.href.includes('/storage/v1/object/') ||
+      (!!supabaseProjectUrl && parsed.host === new URL(supabaseProjectUrl).host)
+    );
   } catch {
     return false;
   }
@@ -112,9 +105,7 @@ function isSupabaseStorageUrl(url: string): boolean {
 function objectPathFromUrl(url: string): string | null {
   try {
     const parsed = new URL(url, window.location.origin);
-    const markers = isDemoMode
-      ? ['/demo-storage/']
-      : [`/storage/v1/object/public/${BUCKET}/`, `/storage/v1/object/${BUCKET}/`];
+    const markers = [`/storage/v1/object/public/${BUCKET}/`, `/storage/v1/object/${BUCKET}/`];
     for (const marker of markers) {
       const idx = parsed.pathname.indexOf(marker);
       if (idx !== -1) return decodeURIComponent(parsed.pathname.slice(idx + marker.length));

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
-import { supabase, demoBackend, isDemoMode } from '../supabase/config';
+import { supabase, isSupabaseConfigured } from '../supabase/config';
 import { firestoreService } from '../services/firestoreService';
 import { ensureGuestSession, clearGuestSessionCache, GuestSessionError } from '../services/guestSession';
 import type { GuestSessionInfo } from '../services/guestSession';
@@ -14,16 +14,13 @@ export const MIN_PASSWORD_LENGTH = 8;
  *
  *   • supabase-session — implicit flow (`#access_token=…&type=recovery`).
  *   • supabase-code    — PKCE flow (`?code=…&type=recovery`).
- *   • demo             — local demo backend (`?type=recovery&reset_token=…`),
- *                        because demo mode has no mail provider to send a link.
  *
  * `config.ts` sets `detectSessionInUrl: false`, so nothing here happens
  * automatically — the recovery link has to be exchanged by hand below.
  */
 export type RecoveryParams =
   | { kind: 'supabase-session'; accessToken: string; refreshToken: string }
-  | { kind: 'supabase-code'; code: string }
-  | { kind: 'demo'; token: string };
+  | { kind: 'supabase-code'; code: string };
 
 /** Reads recovery params from the query string and/or the URL hash. */
 export function parseRecoveryParams(loc: Pick<Location, 'search' | 'hash'> = window.location): RecoveryParams | null {
@@ -39,8 +36,6 @@ export function parseRecoveryParams(loc: Pick<Location, 'search' | 'hash'> = win
     if (code) return { kind: 'supabase-code', code };
   }
 
-  const resetToken = pick('reset_token');
-  if (resetToken) return { kind: 'demo', token: resetToken };
   return null;
 }
 
@@ -48,7 +43,7 @@ export function parseRecoveryParams(loc: Pick<Location, 'search' | 'hash'> = win
 function stripRecoveryParamsFromUrl(): void {
   if (typeof window === 'undefined' || !window.history?.replaceState) return;
   const url = new URL(window.location.href);
-  for (const key of ['type', 'code', 'access_token', 'refresh_token', 'expires_in', 'token_type', 'reset_token']) {
+  for (const key of ['type', 'code', 'access_token', 'refresh_token', 'expires_in', 'token_type']) {
     url.searchParams.delete(key);
   }
   url.hash = '';
@@ -84,14 +79,13 @@ interface AuthContextType {
   /** Set when a sign-in succeeded at the auth layer but the app rejected it. */
   authError: string | null;
   clearAuthError: () => void;
-  /** True when running on the local demo backend (self-service sign-up works). */
-  demoMode: boolean;
+  /** True when Supabase credentials are present. */
+  configured: boolean;
   /** Recovery link found in the URL, if any. */
   recoveryParams: RecoveryParams | null;
   loginWithCredentials: (email: string, pass: string) => Promise<void>;
-  signUpWithCredentials: (email: string, pass: string, displayName?: string) => Promise<void>;
-  /** Emails a reset link (real mode) or returns the local reset URL (demo mode). */
-  requestPasswordReset: (email: string) => Promise<{ demoResetUrl?: string }>;
+  /** Emails a Supabase password-reset link for the address. */
+  requestPasswordReset: (email: string) => Promise<void>;
   /** Exchanges a Supabase recovery link for a session. Returns the account email. */
   beginPasswordRecovery: () => Promise<{ email: string }>;
   /** Sets the new password for the account being recovered. */
@@ -120,6 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Check URL token for Guest Room QR scan.
   useEffect(() => {
+    if (!isSupabaseConfigured) return;
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
     if (urlToken) {
@@ -128,8 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    // A password-recovery link takes priority over the login screen (and is
-    // never a room token — the demo backend uses `reset_token`).
+    // A password-recovery link takes priority over the login screen.
     const recovery = parseRecoveryParams();
     if (recovery) {
       setRecoveryParams(recovery);
@@ -231,6 +225,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Subscribe to Supabase auth state.
   useEffect(() => {
+    // No credentials: App.tsx renders the setup screen, so never touch the
+    // client (it is a stub whose methods throw by design).
+    if (!isSupabaseConfigured) {
+      setIsLoading(false);
+      return;
+    }
+
     let mounted = true;
     supabase.auth
       .getSession()
@@ -263,7 +264,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Guest portal: exchange the scanned room token for a room-scoped session.
   useEffect(() => {
-    if (!guestRoomToken) return;
+    if (!guestRoomToken || !isSupabaseConfigured) return;
     if (firebaseUser && (firebaseUser as any).is_anonymous !== true) {
       // A signed-in staff member previewing keeps their own session.
       setGuestSession(null);
@@ -344,64 +345,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   /**
-   * Self-service registration. Only meaningful on the demo backend: with a
-   * real Supabase project the `profiles` table is written by the service role
-   * (see migration 0001 — no insert policy for `authenticated`), so accounts
-   * are provisioned by `npm run create-super-admin` / the Super Admin console.
+   * Emails a Supabase password-reset link. The origin must be allow-listed in
+   * Auth → URL Configuration → Redirect URLs, or Supabase drops the redirect.
    */
-  const signUpWithCredentials = async (email: string, pass: string, displayName?: string) => {
-    setIsLoading(true);
-    setAuthError(null);
-    try {
-      if (!demoBackend) {
-        throw new Error(
-          'Account creation is disabled on this deployment. Ask the platform owner to provision your email.'
-        );
-      }
-      if (pass.trim().length < MIN_PASSWORD_LENGTH) {
-        throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-      }
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password: pass,
-        options: { data: displayName ? { display_name: displayName.trim() } : undefined },
-      });
-      if (error) throw error;
-      if (data?.user && data?.session) {
-        const result = await processUserClaims(data.user, data.session);
-        if (result && result.ok === false) throw new Error(result.message);
-      }
-    } catch (err: any) {
-      setAuthError(err?.message || 'Could not create the account.');
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  /**
-   * Starts password recovery for an address.
-   * Real Supabase: emails a reset link (the origin must be allow-listed in
-   * Auth → URL Configuration → Redirect URLs).
-   * Demo mode: no mail provider, so the reset URL is returned to the caller.
-   */
-  const requestPasswordReset = async (email: string): Promise<{ demoResetUrl?: string }> => {
-    const clean = email.trim();
-    if (demoBackend) {
-      const res = demoBackend.startPasswordReset(clean);
-      return { demoResetUrl: res.resetUrl || undefined };
-    }
-    const { error } = await supabase.auth.resetPasswordForEmail(clean, {
+  const requestPasswordReset = async (email: string): Promise<void> => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${window.location.origin}/`,
     });
     if (error) throw error;
-    return {};
   };
 
-  /** Exchanges a Supabase recovery link for a session. Demo links need none. */
+  /** Exchanges a recovery link for a session (`detectSessionInUrl` is off). */
   const beginPasswordRecovery = async (): Promise<{ email: string }> => {
     if (!recoveryParams) throw new Error('No password reset link was detected.');
-    if (recoveryParams.kind === 'demo') return { email: '' };
 
     setIsLoading(true);
     try {
@@ -426,16 +382,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       if (newPassword.length < MIN_PASSWORD_LENGTH) {
         throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-      }
-
-      if (demoBackend && recoveryParams?.kind === 'demo') {
-        const res = demoBackend.completePasswordReset(recoveryParams.token, newPassword);
-        if (!res.success) throw new Error(res.message || 'Could not reset the password.');
-        setRecoveryParams(null);
-        stripRecoveryParamsFromUrl();
-        // Demo mode has no session from the link — sign straight in.
-        await loginWithCredentials(res.email || '', newPassword);
-        return;
       }
 
       const { error } = await supabase.auth.updateUser({ password: newPassword });
@@ -535,10 +481,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSelectedTenantId,
         authError,
         clearAuthError,
-        demoMode: isDemoMode,
+        configured: isSupabaseConfigured,
         recoveryParams,
         loginWithCredentials,
-        signUpWithCredentials,
         requestPasswordReset,
         beginPasswordRecovery,
         completePasswordReset,
