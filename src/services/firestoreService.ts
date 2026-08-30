@@ -295,6 +295,29 @@ export const firestoreService = {
     await updateRow('orders', orderId, payload);
   },
 
+  /**
+   * Guest 5-star feedback on a completed order. Guests have no general UPDATE
+   * grant on `orders` (RLS), so this goes through the same ownership-checked
+   * RPC pattern as `linkOrderCharge` — only `guest_feedback` is ever touched.
+   */
+  submitGuestOrderFeedback: async (
+    orderId: string,
+    rating: number,
+    comment?: string
+  ): Promise<{ ok: boolean; reason?: string }> => {
+    try {
+      const { data, error } = await supabase.rpc('submit_guest_order_feedback', {
+        p_order_id: orderId,
+        p_rating: rating,
+        p_comment: comment || '',
+      });
+      if (error) return { ok: false, reason: error.message };
+      return (data as { ok: boolean; reason?: string }) || { ok: false, reason: 'no-response' };
+    } catch (err: any) {
+      return { ok: false, reason: err?.message || 'network-error' };
+    }
+  },
+
   // ==========================================
   // ROOM TYPES
   // ==========================================

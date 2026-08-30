@@ -204,7 +204,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           }}
           className={`w-full flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-6 text-center transition-colors disabled:opacity-50 ${
             dragOver
-              ? 'border-violet-soft bg-violet-tint'
+              ? 'border-accent-soft bg-accent-tint'
               : 'border-hairline bg-canvas-soft hover:border-hairline-dark'
           }`}
         >
@@ -238,7 +238,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       {hint && !error && <p className="t-micro text-ink-faint">{hint}</p>}
 
       {error && (
-        <div className="flex items-start gap-2 bg-violet-tint border border-violet-soft rounded-lg px-3 py-2 text-xs text-primary-deep">
+        <div className="flex items-start gap-2 bg-accent-tint border border-accent-soft rounded-lg px-3 py-2 text-xs text-primary-deep">
           <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           <span className="font-medium">{error}</span>
         </div>

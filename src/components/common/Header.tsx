@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { isDemoMode } from '../../supabase/config';
 import {
   Globe2,
   ArrowLeft,
   User,
   LogOut,
-  FlaskConical,
 } from 'lucide-react';
 
 export const Header: React.FC = () => {
@@ -52,7 +50,7 @@ export const Header: React.FC = () => {
             >
               <div
                 className="w-9 h-9 rounded-lg flex items-center justify-center text-on-primary font-bold text-base"
-                style={{ backgroundColor: hotel?.branding?.primaryColor || '#1b1938' }}
+                style={{ backgroundColor: hotel?.branding?.primaryColor || '#0066cc' }}
               >
                 {hotel?.name ? hotel.name.charAt(0) : 'N'}
               </div>
@@ -61,7 +59,7 @@ export const Header: React.FC = () => {
                   <span className="t-heading-lg text-ink tracking-tight" style={{ fontSize: 16 }}>
                     {hotel ? hotel.name : 'NEXORA HOTEL OS'}
                   </span>
-                  <span className="font-mono text-[10px] font-semibold uppercase tracking-wide bg-violet-tint text-primary-deep border border-violet-soft rounded px-1.5 py-0.5">
+                  <span className="font-mono text-[10px] font-semibold uppercase tracking-wide bg-accent-tint text-primary-deep border border-accent-soft rounded px-1.5 py-0.5">
                     {isSuperAdmin ? 'Super Admin' : (hotel?.hotelCode || 'Hotel Admin')}
                   </span>
                 </div>
@@ -78,7 +76,7 @@ export const Header: React.FC = () => {
                   switchHotelTenant('');
                   setActiveExperience('super_admin');
                 }}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-canvas-soft hover:bg-[#f1efe9] text-ink border border-hairline text-xs font-semibold transition-colors ml-3"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-canvas-soft hover:bg-canvas-soft text-ink border border-hairline text-xs font-semibold transition-colors ml-3"
               >
                 <ArrowLeft className="w-3.5 h-3.5" /> Back to Super Admin HQ
               </button>
@@ -87,18 +85,9 @@ export const Header: React.FC = () => {
 
           {/* Right: Timezone clock, profile, sign out */}
           <div className="flex items-center gap-3">
-            {isDemoMode && (
-              <span
-                className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold"
-                title="Running on the local demo backend. Add Supabase credentials in .env to go live."
-              >
-                <FlaskConical className="w-3.5 h-3.5" />
-                Demo
-              </span>
-            )}
             {hotel && (
               <div className="hidden md:flex items-center gap-1.5 bg-canvas-soft border border-hairline px-3 py-1.5 rounded-lg text-xs font-mono text-ink">
-                <Globe2 className="w-3.5 h-3.5 text-teal-mid" />
+                <Globe2 className="w-3.5 h-3.5 text-success-mid" />
                 <span>{timeString}</span>
                 <span className="text-[10px] text-ink-faint font-sans uppercase">
                   ({hotel.timezone?.split('/')[1] || 'EST'})

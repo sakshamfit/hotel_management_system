@@ -15,7 +15,7 @@ values (
   'Bettiah', 'IN', 'INR', '₹', 'Asia/Kolkata', 'active', 'admin@grandplaza.demo',
   jsonb_build_object(
     'logoUrl', '', 'coverImageUrl', '',
-    'primaryColor', '#1e293b', 'secondaryColor', '#0f172a', 'accentColor', '#d97706',
+    'primaryColor', '#0066cc', 'secondaryColor', '#1d1d1f', 'accentColor', '#0066cc',
     'welcomeMessage', 'Welcome to Grand Plaza', 'fontFamily', 'Inter'
   ),
   (

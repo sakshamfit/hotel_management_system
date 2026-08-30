@@ -169,19 +169,19 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
   return (
     <div className="space-y-6">
       {/* Top Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white border border-[#e8e4dd] p-6 rounded-xl shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white border border-hairline p-6 rounded-xl shadow-xs">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-lg bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] flex items-center justify-center font-bold">
+          <div className="w-12 h-12 rounded-lg bg-accent-tint text-[#0066cc] border border-accent-soft flex items-center justify-center font-bold">
             <Utensils className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h2 className="t-display-md">Restaurant & F&B Menu</h2>
-              <span className="bg-[#e7efee] text-[#0e3030] border border-[#c9dcd9] text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full font-bold">
+              <span className="bg-success-tint text-success-deep border border-success-line text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full font-bold">
                 Supabase Synced
               </span>
             </div>
-            <p className="text-xs text-[#73706d]">
+            <p className="text-xs text-ink-mute">
               Manage items, prices, and live in-stock availability for guest in-room dining orders.
             </p>
           </div>
@@ -189,22 +189,22 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
 
         <button
           onClick={() => handleOpenEdit()}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-sm transition-all self-start sm:self-auto"
+          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#0066cc] hover:bg-[#004fa3] text-white text-xs font-bold shadow-sm transition-all self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" /> + Add Menu Item
         </button>
       </div>
 
       {/* Filter / Search Bar */}
-      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-white p-3.5 rounded-lg border border-[#e8e4dd]">
+      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-white p-3.5 rounded-lg border border-hairline">
         <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#73706d]" />
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-mute" />
           <input
             type="text"
             placeholder="Search menu items..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-[#fafaf8] border border-[#e8e4dd] rounded-xl pl-9 pr-3.5 py-2 text-xs text-[#292827] focus:outline-none focus:border-[#292827]"
+            className="w-full bg-canvas-soft border border-hairline rounded-xl pl-9 pr-3.5 py-2 text-xs text-ink focus:outline-none focus:border-ink"
           />
         </div>
 
@@ -213,8 +213,8 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
             onClick={() => setSelectedCategory('ALL')}
             className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
               selectedCategory === 'ALL'
-                ? 'bg-[#292827] text-white'
-                : 'bg-[#fafaf8] text-[#73706d] hover:bg-[#e8e4dd]'
+                ? 'bg-ink text-white'
+                : 'bg-canvas-soft text-ink-mute hover:bg-hairline'
             }`}
           >
             All Items ({items.length})
@@ -225,8 +225,8 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
               onClick={() => setSelectedCategory(cat)}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
                 selectedCategory === cat
-                  ? 'bg-[#292827] text-white'
-                  : 'bg-[#fafaf8] text-[#73706d] hover:bg-[#e8e4dd]'
+                  ? 'bg-ink text-white'
+                  : 'bg-canvas-soft text-ink-mute hover:bg-hairline'
               }`}
             >
               {cat}
@@ -237,20 +237,20 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
 
       {/* Items Grid or Empty State */}
       {loading ? (
-        <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center">
-          <div className="w-8 h-8 border-2 border-[#1b1938] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-[#73706d] mt-3">Loading menu items…</p>
+        <div className="bg-white border border-hairline rounded-xl p-12 text-center">
+          <div className="w-8 h-8 border-2 border-[#0066cc] border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs text-ink-mute mt-3">Loading menu items…</p>
         </div>
       ) : filteredItems.length === 0 ? (
-        <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center space-y-4 shadow-xs">
-          <div className="w-16 h-16 rounded-full bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] flex items-center justify-center mx-auto">
+        <div className="bg-white border border-hairline rounded-xl p-12 text-center space-y-4 shadow-xs">
+          <div className="w-16 h-16 rounded-full bg-accent-tint text-[#0066cc] border border-accent-soft flex items-center justify-center mx-auto">
             <Utensils className="w-8 h-8" />
           </div>
           <div className="space-y-1 max-w-sm mx-auto">
-            <h3 className="text-base font-bold text-[#292827]">
+            <h3 className="text-base font-bold text-ink">
               {searchQuery ? 'No matching menu items found' : 'No Menu Items Added Yet'}
             </h3>
-            <p className="text-xs text-[#73706d]">
+            <p className="text-xs text-ink-mute">
               {searchQuery
                 ? 'Try searching with another item name.'
                 : 'Create your hotel’s dining menu items with prices, categories, and prep times.'}
@@ -259,7 +259,7 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
           {!searchQuery && (
             <button
               onClick={() => handleOpenEdit()}
-              className="px-5 py-2.5 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-sm inline-flex items-center gap-2"
+              className="px-5 py-2.5 rounded-lg bg-[#0066cc] hover:bg-[#004fa3] text-white text-xs font-bold shadow-sm inline-flex items-center gap-2"
             >
               <Plus className="w-4 h-4" /> Add First Menu Item
             </button>
@@ -272,33 +272,33 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
             return (
               <div
                 key={item.id}
-                className="bg-white border border-[#e8e4dd] hover:border-[#e8e4dd] rounded-xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+                className="bg-white border border-hairline hover:border-hairline rounded-xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
               >
                 <div>
                   {item.imageUrl && (
                     <img
                       src={item.imageUrl}
                       alt={item.name}
-                      className="w-full h-32 object-cover rounded-lg border border-[#e8e4dd] mb-3"
+                      className="w-full h-32 object-cover rounded-lg border border-hairline mb-3"
                     />
                   )}
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <h3 className="font-bold text-sm text-[#292827]">{item.name}</h3>
+                        <h3 className="font-bold text-sm text-ink">{item.name}</h3>
                         {(item.isVegetarian || (item as any).isVeg) && (
-                          <span className="p-0.5 rounded-full bg-[#e7efee] text-[#155555] border border-[#c9dcd9] text-[10px]" title="Vegetarian">
+                          <span className="p-0.5 rounded-full bg-success-tint text-success-mid border border-success-line text-[10px]" title="Vegetarian">
                             <Leaf className="w-3 h-3" />
                           </span>
                         )}
                       </div>
-                      <span className="text-[10px] font-mono text-[#73706d] uppercase bg-[#fafaf8] px-2 py-0.5 rounded-md mt-1 inline-block">
+                      <span className="text-[10px] font-mono text-ink-mute uppercase bg-canvas-soft px-2 py-0.5 rounded-md mt-1 inline-block">
                         {item.category || 'General'}
                       </span>
                     </div>
 
                     <div className="text-right">
-                      <span className="font-bold text-sm text-[#292827]">
+                      <span className="font-bold text-sm text-ink">
                         {hotel.currencySymbol || '$'}
                         {itemPrice}
                       </span>
@@ -306,22 +306,22 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
                   </div>
 
                   {item.description && (
-                    <p className="text-xs text-[#73706d] mt-2 line-clamp-2">{item.description}</p>
+                    <p className="text-xs text-ink-mute mt-2 line-clamp-2">{item.description}</p>
                   )}
 
-                  <div className="flex items-center gap-2 mt-3 text-[11px] text-[#73706d]">
-                    <Clock className="w-3.5 h-3.5 text-[#1b1938]" />
+                  <div className="flex items-center gap-2 mt-3 text-[11px] text-ink-mute">
+                    <Clock className="w-3.5 h-3.5 text-[#0066cc]" />
                     <span>~{item.preparationTimeMinutes || item.prepTimeMinutes || 15} mins prep</span>
                   </div>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-[#e8e4dd] flex items-center justify-between">
+                <div className="mt-4 pt-3 border-t border-hairline flex items-center justify-between">
                   <button
                     onClick={() => handleToggleAvailability(item)}
                     className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
                       item.isAvailable
-                        ? 'bg-[#e7efee] text-[#0e3030] border border-[#c9dcd9]'
-                        : 'bg-[#ece6fb] text-[#0e0c1f] border border-[#c9b4fa]'
+                        ? 'bg-success-tint text-success-deep border border-success-line'
+                        : 'bg-accent-tint text-[#004fa3] border border-accent-soft'
                     }`}
                   >
                     {item.isAvailable ? 'In Stock' : 'Out of Stock'}
@@ -331,14 +331,14 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
                     <button
                       onClick={() => handleOpenEdit(item)}
                       title="Edit Item"
-                      className="p-2 rounded-full hover:bg-[#fafaf8] text-[#73706d] hover:text-[#292827]"
+                      className="p-2 rounded-full hover:bg-canvas-soft text-ink-mute hover:text-ink"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => handleDeleteItem(item)}
                       title="Delete Item"
-                      className="p-2 rounded-full hover:bg-[#ece6fb] text-[#73706d] hover:text-[#1b1938]"
+                      className="p-2 rounded-full hover:bg-accent-tint text-ink-mute hover:text-[#0066cc]"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -353,14 +353,14 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
       {/* Modal: Add/Edit Item */}
       {isEditModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-[#e8e4dd]">
-            <div className="flex items-center justify-between border-b border-[#e8e4dd] pb-3">
-              <h3 className="text-base font-bold text-[#292827]">
+          <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-hairline">
+            <div className="flex items-center justify-between border-b border-hairline pb-3">
+              <h3 className="text-base font-bold text-ink">
                 {editingItem ? 'Edit Menu Item' : 'Add New Menu Item'}
               </h3>
               <button
                 onClick={() => setIsEditModalOpen(false)}
-                className="p-1 rounded-full hover:bg-[#fafaf8] text-[#73706d]"
+                className="p-1 rounded-full hover:bg-canvas-soft text-ink-mute"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -368,8 +368,8 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
 
             <form onSubmit={handleSaveItem} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-semibold text-[#292827] mb-1">
-                  Dish / Item Name <span className="text-[#1b1938]">*</span>
+                <label className="block text-xs font-semibold text-ink mb-1">
+                  Dish / Item Name <span className="text-[#0066cc]">*</span>
                 </label>
                 <input
                   type="text"
@@ -377,14 +377,14 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Truffle Mushroom Risotto"
-                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
+                  className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink focus:outline-none focus:border-ink"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">
-                    Category <span className="text-[#1b1938]">*</span>
+                  <label className="block text-xs font-semibold text-ink mb-1">
+                    Category <span className="text-[#0066cc]">*</span>
                   </label>
                   <input
                     type="text"
@@ -392,13 +392,13 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
                     placeholder="e.g. Starters, Mains, Desserts"
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink focus:outline-none focus:border-ink"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">
-                    Price ({hotel.currencySymbol || '$'}) <span className="text-[#1b1938]">*</span>
+                  <label className="block text-xs font-semibold text-ink mb-1">
+                    Price ({hotel.currencySymbol || '$'}) <span className="text-[#0066cc]">*</span>
                   </label>
                   <input
                     type="number"
@@ -408,13 +408,13 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
                     placeholder="18"
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink focus:outline-none focus:border-ink"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#292827] mb-1">
+                <label className="block text-xs font-semibold text-ink mb-1">
                   Description
                 </label>
                 <textarea
@@ -422,7 +422,7 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Ingredients and culinary notes..."
-                  className="w-full bg-white border border-[#e8e4dd] rounded-xl p-2.5 text-xs text-[#292827] focus:outline-none focus:border-[#292827]"
+                  className="w-full bg-white border border-hairline rounded-xl p-2.5 text-xs text-ink focus:outline-none focus:border-ink"
                 />
               </div>
 
@@ -439,7 +439,7 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                  <label className="block text-xs font-semibold text-ink mb-1">
                     Prep Time (minutes)
                   </label>
                   <input
@@ -447,7 +447,7 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
                     min="1"
                     value={prepTime}
                     onChange={(e) => setPrepTime(e.target.value)}
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827] focus:outline-none focus:border-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink focus:outline-none focus:border-ink"
                   />
                 </div>
 
@@ -457,25 +457,25 @@ export const FoodMenuTab: React.FC<Props> = ({ hotel }) => {
                       type="checkbox"
                       checked={isVegetarian}
                       onChange={(e) => setIsVegetarian(e.target.checked)}
-                      className="w-4 h-4 rounded text-[#1b1938] focus:ring-[#1b1938]"
+                      className="w-4 h-4 rounded text-[#0066cc] focus:ring-[#0066cc]"
                     />
-                    <span className="text-xs font-medium text-[#292827]">Vegetarian Dish</span>
+                    <span className="text-xs font-medium text-ink">Vegetarian Dish</span>
                   </label>
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#e8e4dd]">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-hairline">
                 <button
                   type="button"
                   onClick={() => setIsEditModalOpen(false)}
-                  className="px-4 py-2 rounded-full border border-[#e8e4dd] text-xs font-semibold text-[#73706d]"
+                  className="px-4 py-2 rounded-full border border-hairline text-xs font-semibold text-ink-mute"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-5 py-2 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-xs font-bold text-white shadow-sm disabled:opacity-50"
+                  className="px-5 py-2 rounded-lg bg-[#0066cc] hover:bg-[#004fa3] text-xs font-bold text-white shadow-sm disabled:opacity-50"
                 >
                   {isSubmitting ? 'Saving...' : 'Save Item'}
                 </button>

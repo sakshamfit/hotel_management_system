@@ -1,36 +1,60 @@
 @import "tailwindcss";
 
 /* ============================================================
-   NEXORA HOTEL OS — Superhumon Design Language
-   Three-canvas system: indigo navy hero / white body / deep-teal band
+   NEXORA HOTEL OS — design language
+   Photography-first, single-accent system (Action Blue), quiet UI chrome.
+   Alternating light/near-black canvases, pill CTAs, no decorative gradients,
+   no shadows on chrome — only structure, type and one accent color speak.
    ============================================================ */
 
 @theme {
-  /* Brand & accent */
-  --color-primary: #1b1938;        /* indigo navy — hero canvas, primary CTA */
-  --color-primary-deep: #0e0c1f;   /* pressed-state indigo */
+  /* Brand & accent — one interactive color, everywhere */
+  --color-primary: #0066cc;         /* Action Blue — every CTA, link, focus */
+  --color-primary-hover: #004fa3;   /* pressed/hover state of the primary color */
+  --color-primary-focus: #0071e3;   /* focus ring */
+  --color-primary-on-dark: #2997ff; /* links / accents on dark surfaces */
+  --color-primary-deep: #004fa3;    /* kept for back-compat with older classnames */
+  --color-accent-tint: #eaf3fc;     /* light blue badge / chip background */
+  --color-accent-soft: #cfe6ff;     /* slightly stronger blue tint (active states) */
   --color-on-primary: #ffffff;
-  --color-violet-soft: #c9b4fa;    /* pale violet — hero pill fill */
-  --color-violet-tint: #ece6fb;    /* pale violet tint — light badges */
-  --color-teal-deep: #0e3030;      /* closing CTA band */
-  --color-teal-mid: #155555;       /* lifted teal — success / nested chrome */
-  --color-teal-tint: #e7efee;      /* teal tint — light success surfaces */
-  --color-teal-line: #c9dcd9;      /* teal hairline on tints */
+
+  /* Status — positive/success (kept distinct from the brand accent; it
+     communicates state, not "click me") */
+  --color-success-deep: #1d3b2a;
+  --color-success-mid: #2f6b46;
+  --color-success-tint: #eef6f0;
+  --color-success-line: #cfe3d5;
+
+  /* Status — attention/warning */
+  --color-warn-deep: #92650a;
+  --color-warn-tint: #fdf8ed;
+  --color-warn-line: #f0e2c0;
+
+  /* Status — urgent/error */
+  --color-danger: #ff3b30;
+  --color-danger-deep: #d70015;
+  --color-danger-tint: #fff1f0;
+  --color-danger-line: #ffd6d3;
 
   /* Light surfaces */
   --color-canvas: #ffffff;
-  --color-canvas-soft: #fafaf8;    /* barely-warm off-white */
-  --color-hairline: #e8e4dd;       /* warm grey 1px border */
-  --color-hairline-dark: #3f3a52;  /* border on dark surfaces / outline buttons */
+  --color-canvas-soft: #f5f5f7;     /* Apple parchment */
+  --color-hairline: #e0e0e0;
+  --color-hairline-dark: #3a3a3c;   /* border on dark surfaces */
 
   /* Ink */
-  --color-ink: #292827;            /* warm dark grey — never pure black */
-  --color-ink-mute: #73706d;
-  --color-ink-faint: #9a9794;
+  --color-ink: #1d1d1f;
+  --color-ink-mute: #7a7a7a;
+  --color-ink-faint: #a1a1a6;
 
   /* On-dark ink */
-  --color-on-dark-mute: #bcbac9;
-  --color-on-dark-faint: #5a5772;
+  --color-on-dark-mute: #cccccc;
+  --color-on-dark-faint: #8e8e93;
+
+  /* Near-black tile surfaces (used for the sidebar / hero / dark chrome) */
+  --color-surface-tile-1: #1d1d1f;
+  --color-surface-tile-2: #2a2a2c;
+  --color-surface-tile-3: #252527;
 
   --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -41,12 +65,13 @@
     font-family: var(--font-sans);
     background-color: var(--color-canvas);
     color: var(--color-ink);
-    font-weight: 460;
+    font-weight: 400;
+    letter-spacing: -0.011em;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Quiet warm scrollbars */
+  /* Quiet scrollbars */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: var(--color-canvas-soft); }
   ::-webkit-scrollbar-thumb { background: var(--color-hairline); border-radius: 9999px; }
@@ -54,103 +79,111 @@
 }
 
 /* ------------------------------------------------------------
-   Typography — sub-default variable weights (460 / 540)
+   Typography — SF-Pro-inspired scale (Inter substitute), tight
+   negative tracking at display sizes, 400/600 weight ladder.
    ------------------------------------------------------------ */
 @layer utilities {
-  .t-display-xxl { font-size: 64px; font-weight: 540; line-height: 0.96; letter-spacing: 0; }
-  .t-display-xl  { font-size: 48px; font-weight: 460; line-height: 0.96; letter-spacing: -1.32px; }
-  .t-display-lg  { font-size: 28px; font-weight: 540; line-height: 1.14; letter-spacing: -0.63px; }
-  .t-display-md  { font-size: 22px; font-weight: 460; line-height: 1.1;  letter-spacing: -0.315px; }
-  .t-heading-lg  { font-size: 20px; font-weight: 460; line-height: 1.2;  letter-spacing: -0.4px; }
-  .t-body-lg     { font-size: 18px;    font-weight: 540; line-height: 1.5; letter-spacing: -0.135px; }
-  .t-body-md     { font-size: 16px;    font-weight: 460; line-height: 1.5; }
-  .t-body-strong { font-size: 18.72px; font-weight: 700; line-height: 1.5; }
-  .t-button-md   { font-size: 16px; font-weight: 700; line-height: 1; letter-spacing: 0; }
+  .t-display-xxl { font-size: 56px; font-weight: 600; line-height: 1.07; letter-spacing: -0.02em; }
+  .t-display-xl  { font-size: 40px; font-weight: 600; line-height: 1.1;  letter-spacing: -0.015em; }
+  .t-display-lg  { font-size: 28px; font-weight: 600; line-height: 1.14; letter-spacing: -0.01em; }
+  .t-display-md  { font-size: 22px; font-weight: 600; line-height: 1.2;  letter-spacing: -0.01em; }
+  .t-heading-lg  { font-size: 20px; font-weight: 600; line-height: 1.2;  letter-spacing: -0.01em; }
+  .t-body-lg     { font-size: 18px; font-weight: 400; line-height: 1.5;  letter-spacing: -0.006em; }
+  .t-body-md     { font-size: 16px; font-weight: 400; line-height: 1.5; }
+  .t-body-strong { font-size: 17px; font-weight: 600; line-height: 1.4; }
+  .t-button-md   { font-size: 16px; font-weight: 600; line-height: 1; letter-spacing: 0; }
   .t-button-cap  { font-size: 14px; font-weight: 600; line-height: 1; letter-spacing: 0; }
-  .t-caption     { font-size: 14px; font-weight: 460; line-height: 1.4; }
-  .t-micro       { font-size: 12px; font-weight: 540; line-height: 1.4; }
+  .t-caption     { font-size: 14px; font-weight: 400; line-height: 1.4; }
+  .t-micro       { font-size: 12px; font-weight: 500; line-height: 1.4; }
 
   @media (max-width: 767px) {
-    .t-display-xxl { font-size: 36px; letter-spacing: -0.5px; }
-    .t-display-xl  { font-size: 30px; letter-spacing: -0.66px; }
-    .t-display-lg  { font-size: 24px; letter-spacing: -0.48px; }
-    .t-display-md  { font-size: 19px; letter-spacing: -0.27px; }
+    .t-display-xxl { font-size: 34px; letter-spacing: -0.015em; }
+    .t-display-xl  { font-size: 30px; letter-spacing: -0.015em; }
+    .t-display-lg  { font-size: 24px; letter-spacing: -0.01em; }
+    .t-display-md  { font-size: 19px; }
     .t-body-lg     { font-size: 16px; }
     .t-body-strong { font-size: 16px; }
   }
 }
 
 /* ------------------------------------------------------------
-   Components
+   Components — one pill grammar for actions, compact rects for
+   utility chrome, hairline-only cards (no shadows on UI chrome).
    ------------------------------------------------------------ */
 @layer components {
-  /* Buttons — rounded rectangles on light surfaces; pill only on hero */
+  /* Primary action — the signature pill, Action Blue */
   .btn-primary-dark {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
     background-color: var(--color-primary); color: var(--color-on-primary);
-    border-radius: 8px; padding: 12px 20px;
-    font-size: 14px; font-weight: 700; line-height: 1;
-    transition: background-color .15s ease, transform .1s ease;
+    border-radius: 9999px; padding: 12px 22px;
+    font-size: 14px; font-weight: 600; line-height: 1;
+    transition: background-color .15s ease, transform .08s ease;
   }
-  .btn-primary-dark:hover { background-color: var(--color-primary-deep); }
-  .btn-primary-dark:active { background-color: var(--color-primary-deep); transform: translateY(1px); }
+  .btn-primary-dark:hover { background-color: var(--color-primary-hover); }
+  .btn-primary-dark:active { transform: scale(0.97); }
   .btn-primary-dark:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary-dark:focus-visible { outline: 2px solid var(--color-primary-focus); outline-offset: 2px; }
 
+  /* Hero CTA on dark canvases — same blue, ghost-pill affordance */
   .btn-on-dark-pill {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    background-color: var(--color-violet-soft); color: var(--color-primary);
-    border-radius: 9999px; padding: 12px 20px;
-    font-size: 14px; font-weight: 700; line-height: 1;
-    transition: background-color .15s ease;
+    background-color: var(--color-primary); color: var(--color-on-primary);
+    border-radius: 9999px; padding: 12px 22px;
+    font-size: 14px; font-weight: 600; line-height: 1;
+    transition: background-color .15s ease, transform .08s ease;
   }
-  .btn-on-dark-pill:hover { background-color: #d6c5fb; }
+  .btn-on-dark-pill:hover { background-color: var(--color-primary-hover); }
+  .btn-on-dark-pill:active { transform: scale(0.97); }
 
+  /* Secondary — ghost pill, blue text/border on light canvas */
   .btn-secondary-outline {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    background-color: var(--color-canvas); color: var(--color-ink);
-    border: 1px solid var(--color-hairline-dark);
-    border-radius: 8px; padding: 12px 20px;
-    font-size: 14px; font-weight: 700; line-height: 1;
-    transition: border-color .15s ease, background-color .15s ease;
+    background-color: var(--color-canvas); color: var(--color-primary);
+    border: 1px solid var(--color-primary);
+    border-radius: 9999px; padding: 12px 22px;
+    font-size: 14px; font-weight: 600; line-height: 1;
+    transition: background-color .15s ease, transform .08s ease;
   }
-  .btn-secondary-outline:hover { background-color: var(--color-canvas-soft); }
+  .btn-secondary-outline:hover { background-color: var(--color-accent-tint); }
+  .btn-secondary-outline:active { transform: scale(0.97); }
 
+  /* Utility rect — compact actions inside dark chrome (sign out, etc.) */
   .btn-on-teal {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    background-color: var(--color-canvas); color: var(--color-teal-deep);
+    background-color: var(--color-canvas); color: var(--color-ink);
     border-radius: 8px; padding: 12px 20px;
-    font-size: 14px; font-weight: 700; line-height: 1;
+    font-size: 14px; font-weight: 600; line-height: 1;
     transition: background-color .15s ease;
   }
-  .btn-on-teal:hover { background-color: #e6e2db; }
+  .btn-on-teal:hover { background-color: var(--color-canvas-soft); }
 
-  /* Inputs — 6px radius, warm hairline */
+  /* Inputs — pill-ish rounded, hairline border, blue focus ring */
   .input-super {
     width: 100%;
     background-color: var(--color-canvas); color: var(--color-ink);
     border: 1px solid var(--color-hairline);
-    border-radius: 6px; padding: 10px 12px;
-    font-size: 14px; font-weight: 460; line-height: 1.5;
+    border-radius: 11px; padding: 11px 14px;
+    font-size: 14px; font-weight: 400; line-height: 1.5;
     transition: border-color .15s ease, box-shadow .15s ease;
   }
   .input-super::placeholder { color: var(--color-ink-faint); }
-  .input-super:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px rgba(27,25,56,0.08); }
+  .input-super:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px rgba(0,102,204,0.12); }
 
-  /* Cards */
+  /* Cards — hairline only, no shadow on chrome */
   .card-feature-light {
     background-color: var(--color-canvas);
     border: 1px solid var(--color-hairline);
-    border-radius: 12px;
+    border-radius: 18px;
   }
   .card-feature-row {
     background-color: var(--color-canvas-soft);
     border: 1px solid var(--color-hairline);
-    border-radius: 8px;
+    border-radius: 11px;
   }
   .card-teal-band {
-    background-color: var(--color-teal-deep);
+    background-color: var(--color-surface-tile-1);
     color: var(--color-on-primary);
-    border-radius: 12px;
+    border-radius: 18px;
   }
 
   /* Pill tabs (feature category picker) */
@@ -168,25 +201,24 @@
     color: var(--color-on-primary);
   }
 
-  /* Elevation */
-  .elev-1 { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); }
-  .elev-2 { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
+  /* Elevation — reserved almost exclusively for photography; kept minimal
+     and flat everywhere else per the design system. */
+  .elev-1 { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06); }
+  .elev-2 { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10); }
 
-  /* Hero atmospheric backdrop — violet-sky radial wash over indigo */
+  /* Hero backdrop — flat near-black canvas, atmosphere from photography
+     only (no decorative gradient wash). A single soft vignette keeps text
+     legible over the portrait without introducing a brand gradient. */
   .atmosphere {
-    background-color: var(--color-primary);
-    background-image:
-      radial-gradient(52% 68% at 78% 22%, rgba(201, 180, 250, 0.34) 0%, rgba(201, 180, 250, 0) 62%),
-      radial-gradient(38% 52% at 62% 78%, rgba(120, 161, 219, 0.26) 0%, rgba(120, 161, 219, 0) 70%),
-      radial-gradient(70% 90% at 12% 8%, rgba(14, 12, 31, 0.6) 0%, rgba(14, 12, 31, 0) 60%),
-      linear-gradient(168deg, #1b1938 0%, #171530 46%, #0e0c1f 100%);
+    background-color: var(--color-surface-tile-1);
+    background-image: linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.35) 100%);
   }
 
-  /* Hairline tag (4px radius micro label) */
+  /* Hairline tag (micro label) */
   .tag-hairline {
     display: inline-flex; align-items: center; gap: 4px;
     border: 1px solid var(--color-hairline);
-    border-radius: 4px; padding: 2px 8px;
+    border-radius: 9999px; padding: 2px 10px;
     font-size: 11px; font-weight: 600; line-height: 1.4;
     color: var(--color-ink-mute);
   }
@@ -202,4 +234,3 @@
     transform: translateX(0);
   }
 }
-

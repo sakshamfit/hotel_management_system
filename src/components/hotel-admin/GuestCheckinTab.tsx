@@ -293,29 +293,29 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
     booking: EnrichedBooking;
     action?: React.ReactNode;
   }> = ({ booking, action }) => (
-    <div className="bg-white border border-[#e8e4dd] rounded-xl p-5 shadow-xs flex flex-col justify-between">
+    <div className="bg-white border border-hairline rounded-xl p-5 shadow-xs flex flex-col justify-between">
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-mono font-bold bg-[#fafaf8] border border-[#e8e4dd] px-2.5 py-1 rounded-xl text-[#292827]">
+          <span className="text-xs font-mono font-bold bg-canvas-soft border border-hairline px-2.5 py-1 rounded-xl text-ink">
             Room {booking.resolvedRoomNumber}
           </span>
-          <span className="text-[10px] font-mono font-bold uppercase bg-[#ece6fb] text-[#0e0c1f] border border-[#c9b4fa] px-2.5 py-0.5 rounded-full">
+          <span className="text-[10px] font-mono font-bold uppercase bg-accent-tint text-[#004fa3] border border-accent-soft px-2.5 py-0.5 rounded-full">
             {booking.status.replace('_', ' ')}
           </span>
         </div>
 
         <div>
-          <h4 className="font-bold text-sm text-[#292827]">{booking.resolvedGuestName}</h4>
-          <p className="text-xs text-[#73706d]">
+          <h4 className="font-bold text-sm text-ink">{booking.resolvedGuestName}</h4>
+          <p className="text-xs text-ink-mute">
             {booking.resolvedRoomTypeName} • {booking.numGuests} guest{booking.numGuests === 1 ? '' : 's'} •{' '}
             {booking.source}
           </p>
         </div>
 
-        <div className="space-y-1 text-xs text-[#73706d] bg-[#fafaf8] p-3 rounded-lg border border-[#e8e4dd]">
+        <div className="space-y-1 text-xs text-ink-mute bg-canvas-soft p-3 rounded-lg border border-hairline">
           {booking.resolvedGuestPhone && (
             <div className="flex items-center gap-1.5">
-              <Phone className="w-3.5 h-3.5 text-[#1b1938]" />
+              <Phone className="w-3.5 h-3.5 text-[#0066cc]" />
               <span>{booking.resolvedGuestPhone}</span>
             </div>
           )}
@@ -335,21 +335,21 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
         </div>
       </div>
 
-      {action && <div className="mt-4 pt-3 border-t border-[#e8e4dd]">{action}</div>}
+      {action && <div className="mt-4 pt-3 border-t border-hairline">{action}</div>}
     </div>
   );
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-white border border-[#e8e4dd] p-6 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+      <div className="bg-white border border-hairline p-6 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-lg bg-[#ece6fb] border border-[#c9b4fa] flex items-center justify-center text-[#1b1938]">
+          <div className="w-12 h-12 rounded-lg bg-accent-tint border border-accent-soft flex items-center justify-center text-[#0066cc]">
             <UserCheck className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-[#292827]">Front Desk & Reservations</h2>
-            <p className="text-xs text-[#73706d]">
+            <h2 className="text-base font-bold text-ink">Front Desk & Reservations</h2>
+            <p className="text-xs text-ink-mute">
               Reservations, arrivals, in-house guests and check-outs — stay data lives on the booking.
             </p>
           </div>
@@ -357,7 +357,7 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
 
         <button
           onClick={openBookingModal}
-          className="flex items-center gap-2 px-5 py-2.5 bg-[#1b1938] hover:bg-[#0e0c1f] text-white rounded-lg text-xs font-bold shadow-sm transition-all"
+          className="flex items-center gap-2 px-5 py-2.5 bg-[#0066cc] hover:bg-[#004fa3] text-white rounded-lg text-xs font-bold shadow-sm transition-all"
         >
           <CalendarPlus className="w-4 h-4" /> New Reservation
         </button>
@@ -372,23 +372,23 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
       </div>
 
       {/* Search */}
-      <div className="flex items-center justify-between bg-white p-3.5 rounded-lg border border-[#e8e4dd]">
+      <div className="flex items-center justify-between bg-white p-3.5 rounded-lg border border-hairline">
         <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#73706d]" />
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-mute" />
           <input
             type="text"
             placeholder="Search by guest, room or phone..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-[#fafaf8] border border-[#e8e4dd] rounded-xl pl-9 pr-3.5 py-2 text-xs text-[#292827] focus:outline-none focus:border-[#292827]"
+            className="w-full bg-canvas-soft border border-hairline rounded-xl pl-9 pr-3.5 py-2 text-xs text-ink focus:outline-none focus:border-ink"
           />
         </div>
       </div>
 
       {loading ? (
-        <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center">
-          <div className="w-8 h-8 border-2 border-[#1b1938] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-[#73706d] mt-3">Loading front desk data...</p>
+        <div className="bg-white border border-hairline rounded-xl p-12 text-center">
+          <div className="w-8 h-8 border-2 border-[#0066cc] border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs text-ink-mute mt-3">Loading front desk data...</p>
         </div>
       ) : (
         <div className="space-y-6">
@@ -405,14 +405,14 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleCheckIn(b)}
-                      className="flex-1 py-2.5 px-3 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-sm transition-colors"
+                      className="flex-1 py-2.5 px-3 rounded-lg bg-[#0066cc] hover:bg-[#004fa3] text-white text-xs font-bold shadow-sm transition-colors"
                     >
                       Check In
                     </button>
                     <button
                       onClick={() => handleNoShow(b)}
                       title="Mark as no-show"
-                      className="p-2.5 rounded-lg border border-[#e8e4dd] hover:border-[#c9b4fa] text-[#73706d] hover:text-[#1b1938]"
+                      className="p-2.5 rounded-lg border border-hairline hover:border-accent-soft text-ink-mute hover:text-[#0066cc]"
                     >
                       <Ban className="w-3.5 h-3.5" />
                     </button>
@@ -435,7 +435,7 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
                   <div className="flex gap-2">
                     <button
                       onClick={() => openCheckoutDialog(b)}
-                      className="flex-1 py-2.5 px-3 rounded-full bg-white hover:bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
+                      className="flex-1 py-2.5 px-3 rounded-full bg-white hover:bg-accent-tint text-[#0066cc] border border-accent-soft text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
                     >
                       <LogOut className="w-3.5 h-3.5" /> Check Out
                     </button>
@@ -458,13 +458,13 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleCheckIn(b)}
-                      className="flex-1 py-2.5 px-3 rounded-lg bg-white border border-[#e8e4dd] hover:border-[#c9b4fa] text-[#292827] text-xs font-bold transition-colors"
+                      className="flex-1 py-2.5 px-3 rounded-lg bg-white border border-hairline hover:border-accent-soft text-ink text-xs font-bold transition-colors"
                     >
                       Early Check In
                     </button>
                     <button
                       onClick={() => handleCancelBooking(b)}
-                      className="px-4 py-2.5 rounded-lg border border-[#e8e4dd] hover:border-[#c9b4fa] text-[#73706d] hover:text-[#1b1938] text-xs font-bold transition-colors"
+                      className="px-4 py-2.5 rounded-lg border border-hairline hover:border-accent-soft text-ink-mute hover:text-[#0066cc] text-xs font-bold transition-colors"
                     >
                       Cancel
                     </button>
@@ -487,12 +487,12 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
       {/* ===== New Reservation Modal ===== */}
       {isBookingModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white rounded-xl w-full max-w-lg p-6 space-y-4 shadow-2xl border border-[#e8e4dd] my-8">
-            <div className="flex items-center justify-between border-b border-[#e8e4dd] pb-3">
-              <h3 className="text-base font-bold text-[#292827]">New Reservation</h3>
+          <div className="bg-white rounded-xl w-full max-w-lg p-6 space-y-4 shadow-2xl border border-hairline my-8">
+            <div className="flex items-center justify-between border-b border-hairline pb-3">
+              <h3 className="text-base font-bold text-ink">New Reservation</h3>
               <button
                 onClick={() => setIsBookingModalOpen(false)}
-                className="p-1 rounded-full hover:bg-[#fafaf8] text-[#73706d]"
+                className="p-1 rounded-full hover:bg-canvas-soft text-ink-mute"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -502,29 +502,29 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
               {/* Stay window */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">Check-in *</label>
+                  <label className="block text-xs font-semibold text-ink mb-1">Check-in *</label>
                   <input
                     type="date"
                     required
                     value={checkInDate}
                     min={today}
                     onChange={(e) => setCheckInDate(e.target.value)}
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">Check-out *</label>
+                  <label className="block text-xs font-semibold text-ink mb-1">Check-out *</label>
                   <input
                     type="date"
                     required
                     value={checkOutDate}
                     min={addDays(checkInDate, 1)}
                     onChange={(e) => setCheckOutDate(e.target.value)}
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                   />
                 </div>
               </div>
-              <p className="text-[11px] text-[#73706d] -mt-1">
+              <p className="text-[11px] text-ink-mute -mt-1">
                 {nightCount > 0
                   ? `${nightCount} night${nightCount === 1 ? '' : 's'} — the check-out day is not charged as a night.`
                   : 'Check-out must be at least one night after check-in.'}
@@ -532,14 +532,14 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
 
               {/* Room */}
               <div>
-                <label className="block text-xs font-semibold text-[#292827] mb-1">
-                  Room * {checkingAvailability && <span className="text-[#73706d] font-normal">(checking…)</span>}
+                <label className="block text-xs font-semibold text-ink mb-1">
+                  Room * {checkingAvailability && <span className="text-ink-mute font-normal">(checking…)</span>}
                 </label>
                 <select
                   required
                   value={selectedRoomId}
                   onChange={(e) => handleSelectRoom(e.target.value)}
-                  className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                  className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                 >
                   <option value="">-- Choose Available Room --</option>
                   {availableRooms.map((a) => {
@@ -559,7 +559,7 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
                   </p>
                 )}
                 {availability && availableRooms.length > 0 && (
-                  <p className="text-[11px] text-[#155555] mt-1.5">
+                  <p className="text-[11px] text-success-mid mt-1.5">
                     {availableRooms.length} of {availability.length} room(s) available.
                   </p>
                 )}
@@ -568,71 +568,71 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
               {/* Guest */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">Guest Name *</label>
+                  <label className="block text-xs font-semibold text-ink mb-1">Guest Name *</label>
                   <input
                     type="text"
                     required
                     value={guestName}
                     onChange={(e) => setGuestName(e.target.value)}
                     placeholder="e.g. John Doe"
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">Phone *</label>
+                  <label className="block text-xs font-semibold text-ink mb-1">Phone *</label>
                   <input
                     type="tel"
                     required
                     value={guestPhone}
                     onChange={(e) => setGuestPhone(e.target.value)}
                     placeholder="+91 555 0192"
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">Email</label>
+                  <label className="block text-xs font-semibold text-ink mb-1">Email</label>
                   <input
                     type="email"
                     value={guestEmail}
                     onChange={(e) => setGuestEmail(e.target.value)}
                     placeholder="guest@example.com"
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">Guests</label>
+                  <label className="block text-xs font-semibold text-ink mb-1">Guests</label>
                   <input
                     type="number"
                     min="1"
                     max={selectedRoomType?.maxOccupancy || 20}
                     value={numGuests}
                     onChange={(e) => setNumGuests(e.target.value)}
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">ID Proof Type</label>
+                  <label className="block text-xs font-semibold text-ink mb-1">ID Proof Type</label>
                   <input
                     type="text"
                     value={idProofType}
                     onChange={(e) => setIdProofType(e.target.value)}
                     placeholder="Aadhaar / Passport"
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">ID Number</label>
+                  <label className="block text-xs font-semibold text-ink mb-1">ID Number</label>
                   <input
                     type="text"
                     value={idProofNumber}
                     onChange={(e) => setIdProofNumber(e.target.value)}
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                   />
                 </div>
               </div>
@@ -640,7 +640,7 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
               {/* Commercials */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">Agreed Rate / night *</label>
+                  <label className="block text-xs font-semibold text-ink mb-1">Agreed Rate / night *</label>
                   <input
                     type="number"
                     min="0"
@@ -648,18 +648,18 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
                     required
                     value={agreedRate}
                     onChange={(e) => setAgreedRate(e.target.value)}
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                   />
-                  <p className="text-[10px] text-[#9a9794] mt-1">
+                  <p className="text-[10px] text-ink-faint mt-1">
                     Snapshot at booking — later rate changes don’t move this stay.
                   </p>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">Source</label>
+                  <label className="block text-xs font-semibold text-ink mb-1">Source</label>
                   <select
                     value={source}
                     onChange={(e) => setSource(e.target.value as BookingSource)}
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl px-3.5 py-2 text-sm text-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl px-3.5 py-2 text-sm text-ink"
                   >
                     {SOURCES.map((s) => (
                       <option key={s} value={s}>
@@ -672,11 +672,11 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
 
               {/* Stay total preview */}
               {nightCount > 0 && parseFloat(agreedRate) > 0 && (
-                <div className="bg-[#fafaf8] border border-[#e8e4dd] rounded-lg p-3 text-xs flex items-center justify-between">
-                  <span className="font-semibold text-[#73706d]">
+                <div className="bg-canvas-soft border border-hairline rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="font-semibold text-ink-mute">
                     Room total · {nightCount} night{nightCount === 1 ? '' : 's'}
                   </span>
-                  <span className="font-mono font-bold text-[#292827]">
+                  <span className="font-mono font-bold text-ink">
                     {hotel.currencySymbol || '$'}
                     {(nightCount * parseFloat(agreedRate)).toFixed(2)}
                   </span>
@@ -684,24 +684,24 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
               )}
 
               {error && (
-                <div className="bg-[#ece6fb] border border-violet-soft rounded-lg p-3.5 text-xs text-primary-deep flex items-start gap-2.5">
+                <div className="bg-accent-tint border border-accent-soft rounded-lg p-3.5 text-xs text-primary-deep flex items-start gap-2.5">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                   <span className="font-medium">{error}</span>
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#e8e4dd]">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-hairline">
                 <button
                   type="button"
                   onClick={() => setIsBookingModalOpen(false)}
-                  className="px-4 py-2 rounded-full border border-[#e8e4dd] text-xs font-semibold text-[#73706d]"
+                  className="px-4 py-2 rounded-full border border-hairline text-xs font-semibold text-ink-mute"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting || checkingAvailability || availableRooms.length === 0}
-                  className="px-5 py-2 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-xs font-bold text-white shadow-sm disabled:opacity-50"
+                  className="px-5 py-2 rounded-lg bg-[#0066cc] hover:bg-[#004fa3] text-xs font-bold text-white shadow-sm disabled:opacity-50"
                 >
                   {isSubmitting ? 'Booking…' : 'Confirm Reservation'}
                 </button>
@@ -714,59 +714,59 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
       {/* ===== Check-out dialog ===== */}
       {checkoutTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-[#e8e4dd]">
-            <div className="flex items-center justify-between border-b border-[#e8e4dd] pb-3">
-              <h3 className="text-base font-bold text-[#292827]">Check Out</h3>
+          <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-hairline">
+            <div className="flex items-center justify-between border-b border-hairline pb-3">
+              <h3 className="text-base font-bold text-ink">Check Out</h3>
               <button
                 onClick={() => setCheckoutTarget(null)}
-                className="p-1 rounded-full hover:bg-[#fafaf8] text-[#73706d]"
+                className="p-1 rounded-full hover:bg-canvas-soft text-ink-mute"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="space-y-2 text-sm">
-              <p className="text-[#292827]">
+              <p className="text-ink">
                 <strong>{checkoutTarget.resolvedGuestName}</strong> — Room {checkoutTarget.resolvedRoomNumber}
               </p>
-              <p className="text-xs text-[#73706d]">
+              <p className="text-xs text-ink-mute">
                 {checkoutTarget.checkInDate} → {checkoutTarget.checkOutDate} (
                 {nightsBetween(checkoutTarget.checkInDate, checkoutTarget.checkOutDate)} nights)
               </p>
             </div>
 
-            <div className="bg-[#fafaf8] border border-[#e8e4dd] rounded-lg p-4 space-y-2">
+            <div className="bg-canvas-soft border border-hairline rounded-lg p-4 space-y-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-[#73706d] font-medium">Folio balance</span>
-                <span className="font-mono font-bold text-[#1b1938]">
+                <span className="text-ink-mute font-medium">Folio balance</span>
+                <span className="font-mono font-bold text-[#0066cc]">
                   {checkoutFolio
                     ? `${hotel.currencySymbol || '$'}${Number(checkoutFolio.balance || 0).toFixed(2)}`
                     : '—'}
                 </span>
               </div>
-              <p className="text-[11px] text-[#9a9794]">
+              <p className="text-[11px] text-ink-faint">
                 {checkoutFolio
                   ? `Folio ${checkoutFolio.status}. Room-night charges are raised by night audit (not built yet).`
                   : 'No folio found for this booking.'}
               </p>
             </div>
 
-            <p className="text-[11px] text-[#73706d]">
+            <p className="text-[11px] text-ink-mute">
               The room will be marked <strong>cleaning</strong> — housekeeping clears it back to available.
             </p>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#e8e4dd]">
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-hairline">
               <button
                 type="button"
                 onClick={() => setCheckoutTarget(null)}
-                className="px-4 py-2 rounded-full border border-[#e8e4dd] text-xs font-semibold text-[#73706d]"
+                className="px-4 py-2 rounded-full border border-hairline text-xs font-semibold text-ink-mute"
               >
                 Cancel
               </button>
               <button
                 onClick={confirmCheckOut}
                 disabled={isCheckingOut}
-                className="px-5 py-2 rounded-lg bg-[#155555] hover:bg-[#0e3030] text-xs font-bold text-white shadow-sm disabled:opacity-50"
+                className="px-5 py-2 rounded-lg bg-success-mid hover:bg-success-deep text-xs font-bold text-white shadow-sm disabled:opacity-50"
               >
                 {isCheckingOut ? 'Checking out…' : 'Confirm Check-Out'}
               </button>
@@ -779,10 +779,10 @@ export const GuestCheckinTab: React.FC<Props> = ({ hotel }) => {
 };
 
 const StatCard: React.FC<{ label: string; value: number; hint: string }> = ({ label, value, hint }) => (
-  <div className="bg-white border border-[#e8e4dd] p-5 rounded-xl shadow-xs">
-    <span className="text-xs text-[#73706d] font-medium">{label}</span>
-    <div className="text-2xl font-bold text-[#1b1938] mt-1 font-mono">{value}</div>
-    <div className="text-[11px] text-[#73706d] mt-1">{hint}</div>
+  <div className="bg-white border border-hairline p-5 rounded-xl shadow-xs">
+    <span className="text-xs text-ink-mute font-medium">{label}</span>
+    <div className="text-2xl font-bold text-[#0066cc] mt-1 font-mono">{value}</div>
+    <div className="text-[11px] text-ink-mute mt-1">{hint}</div>
   </div>
 );
 
@@ -795,12 +795,12 @@ const Section: React.FC<{
   const count = React.Children.count(children);
   return (
     <div className="space-y-3">
-      <h3 className="font-bold text-sm text-[#292827] flex items-center gap-2">
+      <h3 className="font-bold text-sm text-ink flex items-center gap-2">
         {icon} {title}
       </h3>
       {count === 0 ? (
         empty ? (
-          <div className="bg-white border border-[#e8e4dd] rounded-xl p-8 text-center text-xs text-[#73706d]">
+          <div className="bg-white border border-hairline rounded-xl p-8 text-center text-xs text-ink-mute">
             {empty}
           </div>
         ) : null

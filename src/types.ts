@@ -65,6 +65,20 @@ export interface HotelModules {
   requireCallConfirmation: boolean;
 }
 
+/** Department a service/request routes to — drives the staff dispatch queues. */
+export type Department = 'HOUSEKEEPING' | 'WATER_BEVERAGES' | 'AMENITIES' | 'MAINTENANCE' | 'RECEPTION';
+
+/** Priority on a service/maintenance request. */
+export type RequestPriority = 'NORMAL' | 'URGENT';
+
+/** Per-department shared-device PIN lock (default '1234', editable in Settings). */
+export interface StaffPins {
+  RECEPTION?: string;
+  KITCHEN?: string;
+  HOUSEKEEPING?: string;
+  MAINTENANCE?: string;
+}
+
 export interface Hotel {
   id: string; // e.g. "tenant_nxr_001"
   hotelCode: string; // e.g. "NXR-GPH-001"
@@ -89,6 +103,13 @@ export interface Hotel {
   branding: HotelBranding;
   modules: HotelModules;
   roomsCount?: number;
+  /** GST/tax percentage applied to F&B orders in the guest checkout breakdown. */
+  gstPercent?: number;
+  /** Operating hours, "HH:MM" 24h — shown to guests, does not hard-block ordering. */
+  openTime?: string;
+  closeTime?: string;
+  /** Shared-device department PIN lock for the staff tabs. Default '1234' each. */
+  staffPins?: StaffPins;
   adminCredentials?: {
     name: string;
     email: string;
@@ -281,6 +302,8 @@ export interface HotelService {
   requiresApproval?: boolean;
   requiresNotes?: boolean;
   displayOrder?: number;
+  /** Which staff queue this request routes to (Housekeeping/Maintenance/...). */
+  department?: Department;
 }
 
 export interface FoodCategory {
@@ -360,6 +383,8 @@ export interface ServiceRequest {
   totalAmount?: number;
   status: RequestStatus;
   priority?: RequestPriority;
+  /** Denormalized copy of the service's department, set at order time. */
+  department?: Department | string;
   assignedStaffId?: string | null;
   assignedStaffName?: string | null;
   estimatedDeliveryMinutes?: number;

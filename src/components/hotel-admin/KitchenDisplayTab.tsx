@@ -52,19 +52,19 @@ export const KitchenDisplayTab: React.FC<Props> = ({ hotel }) => {
   return (
     <div className="space-y-6">
       {/* KDS Header */}
-      <div className="bg-white border border-[#e8e4dd] p-6 rounded-xl flex items-center justify-between shadow-xs">
+      <div className="bg-white border border-hairline p-6 rounded-xl flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-lg bg-[#ece6fb] border border-[#c9b4fa] flex items-center justify-center text-[#1b1938]">
+          <div className="w-12 h-12 rounded-lg bg-accent-tint border border-accent-soft flex items-center justify-center text-[#0066cc]">
             <Flame className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h2 className="t-display-md">Kitchen Display System (KDS)</h2>
-              <span className="bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full font-bold">
+              <span className="bg-accent-tint text-[#0066cc] border border-accent-soft text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full font-bold">
                 Chef Screen
               </span>
             </div>
-            <p className="text-xs text-[#73706d]">
+            <p className="text-xs text-ink-mute">
               Real-time kitchen order queue • {orders.length} active tickets
             </p>
           </div>
@@ -74,8 +74,8 @@ export const KitchenDisplayTab: React.FC<Props> = ({ hotel }) => {
           onClick={() => setSoundEnabled(!soundEnabled)}
           className={`p-2.5 rounded-full border transition-colors ${
             soundEnabled
-              ? 'bg-[#ece6fb] border-[#c9b4fa] text-[#1b1938]'
-              : 'bg-[#fafaf8] border-[#e8e4dd] text-[#73706d]'
+              ? 'bg-accent-tint border-accent-soft text-[#0066cc]'
+              : 'bg-canvas-soft border-hairline text-ink-mute'
           }`}
           title="Toggle incoming chime"
         >
@@ -85,18 +85,18 @@ export const KitchenDisplayTab: React.FC<Props> = ({ hotel }) => {
 
       {/* Orders or Empty State */}
       {loading ? (
-        <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center">
-          <div className="w-8 h-8 border-2 border-[#1b1938] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-[#73706d] mt-3">Listening for kitchen orders...</p>
+        <div className="bg-white border border-hairline rounded-xl p-12 text-center">
+          <div className="w-8 h-8 border-2 border-[#0066cc] border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs text-ink-mute mt-3">Listening for kitchen orders...</p>
         </div>
       ) : orders.length === 0 ? (
-        <div className="bg-white border border-[#e8e4dd] rounded-xl p-12 text-center space-y-3 shadow-xs">
-          <div className="w-16 h-16 rounded-full bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa] flex items-center justify-center mx-auto">
+        <div className="bg-white border border-hairline rounded-xl p-12 text-center space-y-3 shadow-xs">
+          <div className="w-16 h-16 rounded-full bg-accent-tint text-[#0066cc] border border-accent-soft flex items-center justify-center mx-auto">
             <Utensils className="w-8 h-8" />
           </div>
           <div className="space-y-1 max-w-sm mx-auto">
-            <h3 className="text-base font-bold text-[#292827]">Kitchen Order Queue Clear</h3>
-            <p className="text-xs text-[#73706d]">
+            <h3 className="text-base font-bold text-ink">Kitchen Order Queue Clear</h3>
+            <p className="text-xs text-ink-mute">
               All dining tickets have been completed. New guest food orders will appear here in real time.
             </p>
           </div>
@@ -108,24 +108,24 @@ export const KitchenDisplayTab: React.FC<Props> = ({ hotel }) => {
             return (
               <div
                 key={ticket.id}
-                className="bg-white border-2 border-[#e8e4dd] rounded-xl p-5 shadow-xs flex flex-col justify-between"
+                className="bg-white border-2 border-hairline rounded-xl p-5 shadow-xs flex flex-col justify-between"
               >
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-mono font-bold bg-[#292827] text-white px-3 py-1 rounded-xl">
+                    <span className="text-sm font-mono font-bold bg-ink text-white px-3 py-1 rounded-xl">
                       Room {ticket.roomNumber}
                     </span>
-                    <span className="text-xs font-mono font-bold text-[#1b1938]">
+                    <span className="text-xs font-mono font-bold text-[#0066cc]">
                       {ticket.guestName || 'Guest'}
                     </span>
                   </div>
 
                   {/* Items List */}
-                  <div className="bg-[#fafaf8] border border-[#e8e4dd] p-3 rounded-lg space-y-2">
+                  <div className="bg-canvas-soft border border-hairline p-3 rounded-lg space-y-2">
                     {ticket.items &&
                       ticket.items.map((it: any, idx: number) => (
                         <div key={idx} className="flex items-center justify-between text-xs">
-                          <span className="font-semibold text-[#292827]">
+                          <span className="font-semibold text-ink">
                             {it.quantity}x {it.name}
                           </span>
                         </div>
@@ -133,24 +133,24 @@ export const KitchenDisplayTab: React.FC<Props> = ({ hotel }) => {
                   </div>
 
                   {ticket.instructions && (
-                    <div className="text-xs text-[#73706d] italic bg-[#fafaf8] p-2 rounded-xl border border-[#e8e4dd]">
+                    <div className="text-xs text-ink-mute italic bg-canvas-soft p-2 rounded-xl border border-hairline">
                       Chef Note: {ticket.instructions}
                     </div>
                   )}
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-[#e8e4dd] flex items-center gap-2">
+                <div className="mt-4 pt-3 border-t border-hairline flex items-center gap-2">
                   {status !== 'READY' && status !== 'COMPLETED' ? (
                     <button
                       onClick={() => handleUpdate(ticket.id, 'READY')}
-                      className="flex-1 py-2.5 px-3 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-sm transition-colors"
+                      className="flex-1 py-2.5 px-3 rounded-lg bg-[#0066cc] hover:bg-[#004fa3] text-white text-xs font-bold shadow-sm transition-colors"
                     >
                       Mark Food Ready
                     </button>
                   ) : (
                     <button
                       onClick={() => handleUpdate(ticket.id, 'COMPLETED')}
-                      className="flex-1 py-2.5 px-3 rounded-full bg-[#155555] hover:bg-[#0e3030] text-white text-xs font-bold shadow-sm transition-colors"
+                      className="flex-1 py-2.5 px-3 rounded-full bg-success-mid hover:bg-success-deep text-white text-xs font-bold shadow-sm transition-colors"
                     >
                       Delivered to Room
                     </button>
