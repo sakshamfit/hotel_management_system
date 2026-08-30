@@ -1,5 +1,12 @@
 import React, { useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { isDemoMode } from '../../supabase/config';
+import {
+  DEMO_SUPER_ADMIN_EMAIL,
+  DEMO_SUPER_ADMIN_PASSWORD,
+  DEMO_HOTEL_ADMIN_EMAIL,
+  DEMO_HOTEL_ADMIN_PASSWORD,
+} from '../../supabase/demoSeed';
 import {
   Lock,
   Mail,
@@ -7,6 +14,7 @@ import {
   EyeOff,
   ArrowRight,
   AlertCircle,
+  FlaskConical,
 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
@@ -169,8 +177,52 @@ export const LoginPage: React.FC = () => {
                 </div>
               )}
 
-              {/* Success banner — the first super admin is created automatically
-                  on app startup; nothing to sync manually anymore. */}
+              {/* Demo mode panel — shown only when Supabase is not configured */}
+              {isDemoMode && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <FlaskConical className="w-4 h-4 shrink-0 mt-0.5 text-amber-700" />
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-bold text-amber-900">Demo mode — no Supabase required</p>
+                      <p className="text-[11px] leading-relaxed text-amber-800/90">
+                        Running on a local, seeded backend with a demo hotel, live stay and orders.
+                        To go live, set Supabase credentials in <code className="font-mono">.env</code>{' '}
+                        (see <code className="font-mono">docs/supabase-setup.md</code>).
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmail(DEMO_SUPER_ADMIN_EMAIL);
+                        setPassword(DEMO_SUPER_ADMIN_PASSWORD);
+                        setErrorMessage(null);
+                      }}
+                      className="flex-1 text-left text-[11px] bg-white border border-amber-200 rounded-lg px-3 py-2 hover:border-amber-400 transition-colors"
+                    >
+                      <span className="block font-bold text-amber-900">Use Super Admin</span>
+                      <span className="block font-mono text-amber-700 truncate">{DEMO_SUPER_ADMIN_EMAIL}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmail(DEMO_HOTEL_ADMIN_EMAIL);
+                        setPassword(DEMO_HOTEL_ADMIN_PASSWORD);
+                        setErrorMessage(null);
+                      }}
+                      className="flex-1 text-left text-[11px] bg-white border border-amber-200 rounded-lg px-3 py-2 hover:border-amber-400 transition-colors"
+                    >
+                      <span className="block font-bold text-amber-900">Use Hotel Admin</span>
+                      <span className="block font-mono text-amber-700 truncate">{DEMO_HOTEL_ADMIN_EMAIL}</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-amber-700/80">
+                    Guest portal demo: open <code className="font-mono">/?token=tok-demo-101</code>{' '}
+                    (Room 101 QR) in a new tab.
+                  </p>
+                </div>
+              )}
 
               {/* Error banner */}
               {errorMessage && !isIdentityToolkitError && (
@@ -252,7 +304,8 @@ export const LoginPage: React.FC = () => {
               <button
                 type="button"
                 onClick={handleGoogleLogin}
-                disabled={googleLoading}
+                disabled={googleLoading || isDemoMode}
+                title={isDemoMode ? 'Google sign-in requires a real Supabase project' : undefined}
                 className="btn-secondary-outline w-full py-3"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24">

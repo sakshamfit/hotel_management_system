@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { isDemoMode } from '../../supabase/config';
 import {
   Globe2,
   ArrowLeft,
   User,
   LogOut,
+  FlaskConical,
 } from 'lucide-react';
 
 export const Header: React.FC = () => {
@@ -85,6 +87,15 @@ export const Header: React.FC = () => {
 
           {/* Right: Timezone clock, profile, sign out */}
           <div className="flex items-center gap-3">
+            {isDemoMode && (
+              <span
+                className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold"
+                title="Running on the local demo backend. Add Supabase credentials in .env to go live."
+              >
+                <FlaskConical className="w-3.5 h-3.5" />
+                Demo
+              </span>
+            )}
             {hotel && (
               <div className="hidden md:flex items-center gap-1.5 bg-canvas-soft border border-hairline px-3 py-1.5 rounded-lg text-xs font-mono text-ink">
                 <Globe2 className="w-3.5 h-3.5 text-teal-mid" />
