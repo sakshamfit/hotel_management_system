@@ -603,6 +603,27 @@ function localPostGuestOrderCharge(orderId: string): Promise<Record<string, any>
   return Promise.resolve({ linked: true, chargeId: charge.id });
 }
 
+/** Replicates public.submit_guest_order_feedback() from the 0002 migration. */
+function localSubmitGuestOrderFeedback(orderId: string, rating: number, comment: string): Promise<Record<string, any>> {
+  const scope = resolveScope();
+  if (scope.kind !== 'guest') return Promise.resolve({ ok: false, reason: 'not-scoped' });
+  if (!rating || rating < 1 || rating > 5) return Promise.resolve({ ok: false, reason: 'invalid-rating' });
+
+  const order = (state.tables.orders || []).find((o) => o.id === orderId && o.hotel_id === scope.hotelId);
+  if (!order) return Promise.resolve({ ok: false, reason: 'order-not-found' });
+  if (String(order.guest_uid || '') !== scope.uid || order.room_id !== scope.roomId) {
+    return Promise.resolve({ ok: false, reason: 'forbidden' });
+  }
+  if (!['COMPLETED', 'DELIVERED'].includes(String(order.status || '').toUpperCase())) {
+    return Promise.resolve({ ok: false, reason: 'not-completed' });
+  }
+
+  directUpdate('orders', orderId, {
+    guest_feedback: { rating, comment: (comment || '').slice(0, 500), submittedAt: nowIso() },
+  });
+  return Promise.resolve({ ok: true });
+}
+
 // ---------------------------------------------------------------------------
 // Demo-mode helpers used by guestSession/firestoreService (service-role stand-ins)
 // ---------------------------------------------------------------------------
@@ -910,6 +931,13 @@ export class LocalSupabaseClient {
     if (fn === 'create_booking') return rpcCreateBooking(params);
     if (fn === 'post_guest_order_charge') {
       return localPostGuestOrderCharge(String(params.p_order_id || '')).then((data) => ({ data, error: null }));
+    }
+    if (fn === 'submit_guest_order_feedback') {
+      return localSubmitGuestOrderFeedback(
+        String(params.p_order_id || ''),
+        Number(params.p_rating) || 0,
+        String(params.p_comment || '')
+      ).then((data) => ({ data, error: null }));
     }
     return Promise.resolve({ data: null, error: { message: `Unknown RPC: ${fn}` } });
   }

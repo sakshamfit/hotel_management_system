@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { firestoreService } from '../../services/firestoreService';
+import { buildWhatsAppOrderUrl } from '../../utils/whatsapp';
 import {
   Hotel,
   Room,
@@ -20,6 +21,8 @@ import {
   Leaf,
   Layers,
   AlertCircle,
+  MessageCircle,
+  Star,
 } from 'lucide-react';
 
 interface CartItem {
@@ -47,10 +50,13 @@ export const GuestRoomView: React.FC = () => {
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [orderSuccessMsg, setOrderSuccessMsg] = useState<string | null>(null);
+  const [lastWhatsAppUrl, setLastWhatsAppUrl] = useState<string | null>(null);
+  const [feedbackSubmittingId, setFeedbackSubmittingId] = useState<string | null>(null);
 
   // Service Request State
   const [selectedService, setSelectedService] = useState<HotelService | null>(null);
   const [serviceNotes, setServiceNotes] = useState('');
+  const [servicePriority, setServicePriority] = useState<'NORMAL' | 'URGENT'>('NORMAL');
 
   /**
    * 1. Resolve the hotel, the room, and this guest's orders.
@@ -182,7 +188,10 @@ export const GuestRoomView: React.FC = () => {
     });
   };
 
-  const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const cartSubtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const gstPercent = hotel?.gstPercent || 0;
+  const cartGstAmount = Math.round(cartSubtotal * (gstPercent / 100) * 100) / 100;
+  const cartTotal = Math.round((cartSubtotal + cartGstAmount) * 100) / 100;
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   // Submit Food Order
@@ -193,6 +202,11 @@ export const GuestRoomView: React.FC = () => {
     try {
       const roomNum = room?.roomNumber || '101';
       const guestName = guestSession?.guestName || 'In-Room Guest';
+      const orderItems = cart.map((c) => ({
+        name: c.foodItem.name,
+        quantity: c.quantity,
+        price: c.price,
+      }));
 
       // NOTE: keep this payload to exactly the fields the `orders` create rule
       // allows for guests, and never send `undefined` (the Firestore SDK
@@ -205,11 +219,7 @@ export const GuestRoomView: React.FC = () => {
         guestName,
         type: 'food',
         status: 'PENDING',
-        items: cart.map((c) => ({
-          name: c.foodItem.name,
-          quantity: c.quantity,
-          price: c.price,
-        })),
+        items: orderItems,
         totalAmount: cartTotal,
         ...(notes ? { instructions: notes } : {}),
         createdAt: new Date().toISOString(),
@@ -227,12 +237,25 @@ export const GuestRoomView: React.FC = () => {
           });
       }
 
+      setLastWhatsAppUrl(
+        buildWhatsAppOrderUrl(hotel.ownerWhatsApp, {
+          hotelName: hotel.name,
+          roomNumber: roomNum,
+          guestName,
+          type: 'food',
+          items: orderItems,
+          totalAmount: cartTotal,
+          currencySymbol: hotel.currencySymbol,
+          instructions: notes,
+        })
+      );
+
       setCart([]);
       setIsCartOpen(false);
       setSpecialInstructions('');
       setOrderSuccessMsg('Your dining order has been sent directly to the kitchen!');
       setActiveTab('orders');
-      setTimeout(() => setOrderSuccessMsg(null), 5000);
+      setTimeout(() => setOrderSuccessMsg(null), 8000);
     } catch (err: any) {
       alert(`Error submitting order: ${err.message}`);
     } finally {
@@ -248,6 +271,7 @@ export const GuestRoomView: React.FC = () => {
     try {
       const roomNum = room?.roomNumber || '101';
       const guestName = guestSession?.guestName || 'In-Room Guest';
+      const notes = serviceNotes.trim();
 
       const serviceOrderId = await firestoreService.addOrder(hotel.id, {
         roomId: room?.id || guestSession?.roomId || '',
@@ -256,6 +280,8 @@ export const GuestRoomView: React.FC = () => {
         guestName,
         type: 'service',
         status: 'PENDING',
+        priority: servicePriority,
+        ...(selectedService.department ? { department: selectedService.department } : {}),
         items: [
           {
             name: selectedService.name,
@@ -264,7 +290,7 @@ export const GuestRoomView: React.FC = () => {
           },
         ],
         totalAmount: selectedService.price || 0,
-        ...(serviceNotes.trim() ? { instructions: serviceNotes.trim() } : {}),
+        ...(notes ? { instructions: notes } : {}),
         createdAt: new Date().toISOString(),
       });
 
@@ -278,11 +304,25 @@ export const GuestRoomView: React.FC = () => {
           });
       }
 
+      setLastWhatsAppUrl(
+        buildWhatsAppOrderUrl(hotel.ownerWhatsApp, {
+          hotelName: hotel.name,
+          roomNumber: roomNum,
+          guestName,
+          type: 'service',
+          items: [{ name: selectedService.name, quantity: 1, price: selectedService.price || 0 }],
+          totalAmount: selectedService.price || 0,
+          currencySymbol: hotel.currencySymbol,
+          instructions: notes,
+        })
+      );
+
       setSelectedService(null);
       setServiceNotes('');
+      setServicePriority('NORMAL');
       setOrderSuccessMsg(`Request for "${selectedService.name}" dispatched to housekeeping/front desk!`);
       setActiveTab('orders');
-      setTimeout(() => setOrderSuccessMsg(null), 5000);
+      setTimeout(() => setOrderSuccessMsg(null), 8000);
     } catch (err: any) {
       alert(`Error submitting request: ${err.message}`);
     } finally {
@@ -290,14 +330,29 @@ export const GuestRoomView: React.FC = () => {
     }
   };
 
+  // Guest feedback (5-star + comment) on a completed order
+  const handleSubmitFeedback = async (orderId: string, rating: number, comment: string) => {
+    setFeedbackSubmittingId(orderId);
+    try {
+      const result = await firestoreService.submitGuestOrderFeedback(orderId, rating, comment);
+      if (!result.ok) {
+        alert(`Could not submit feedback: ${result.reason || 'unknown error'}`);
+      }
+    } catch (err: any) {
+      alert(`Could not submit feedback: ${err.message}`);
+    } finally {
+      setFeedbackSubmittingId(null);
+    }
+  };
+
   if (guestSessionError) {
     return (
-      <div className="min-h-screen bg-[#fafaf8] flex items-center justify-center p-6">
-        <div className="bg-white border border-[#e8e4dd] p-8 rounded-xl max-w-sm text-center space-y-3 shadow-xs">
+      <div className="min-h-screen bg-canvas-soft flex items-center justify-center p-6">
+        <div className="bg-white border border-hairline p-8 rounded-xl max-w-sm text-center space-y-3 shadow-xs">
           <AlertCircle className="w-10 h-10 text-[#b45309] mx-auto" />
-          <h3 className="text-base font-bold text-[#292827]">This room link can’t be opened</h3>
-          <p className="text-xs text-[#73706d]">{guestSessionError}</p>
-          <p className="text-[11px] text-[#9a9794]">
+          <h3 className="text-base font-bold text-ink">This room link can’t be opened</h3>
+          <p className="text-xs text-ink-mute">{guestSessionError}</p>
+          <p className="text-[11px] text-ink-faint">
             Ask the front desk to re-issue the QR code for this room.
           </p>
         </div>
@@ -307,10 +362,10 @@ export const GuestRoomView: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#fafaf8] flex items-center justify-center p-6">
+      <div className="min-h-screen bg-canvas-soft flex items-center justify-center p-6">
         <div className="text-center space-y-3">
-          <div className="w-10 h-10 border-3 border-[#1b1938] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-semibold text-[#73706d]">Connecting to room experience...</p>
+          <div className="w-10 h-10 border-3 border-[#0066cc] border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs font-semibold text-ink-mute">Connecting to room experience...</p>
         </div>
       </div>
     );
@@ -318,11 +373,11 @@ export const GuestRoomView: React.FC = () => {
 
   if (!hotel) {
     return (
-      <div className="min-h-screen bg-[#fafaf8] flex items-center justify-center p-6">
-        <div className="bg-white border border-[#e8e4dd] p-8 rounded-xl max-w-sm text-center space-y-3 shadow-xs">
-          <BedDouble className="w-10 h-10 text-[#1b1938] mx-auto" />
-          <h3 className="text-base font-bold text-[#292827]">No Hotel Configured</h3>
-          <p className="text-xs text-[#73706d]">
+      <div className="min-h-screen bg-canvas-soft flex items-center justify-center p-6">
+        <div className="bg-white border border-hairline p-8 rounded-xl max-w-sm text-center space-y-3 shadow-xs">
+          <BedDouble className="w-10 h-10 text-[#0066cc] mx-auto" />
+          <h3 className="text-base font-bold text-ink">No Hotel Configured</h3>
+          <p className="text-xs text-ink-mute">
             Please provision a hotel from the Super Admin panel to test the guest room experience.
           </p>
         </div>
@@ -341,15 +396,13 @@ export const GuestRoomView: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-canvas-soft pb-24 text-ink">
-      {/* Hotel & In-Room Header — the indigo hero band with violet-sky atmosphere */}
+      {/* Hotel & In-Room Header — near-black hero band, single accent color */}
       <div className="atmosphere relative px-4 py-7 sm:py-9 sticky top-16 z-20 overflow-hidden">
-        {/* soft violet glow accent */}
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(42%_90%_at_82%_10%,rgba(201,180,250,0.28)_0%,rgba(201,180,250,0)_70%)]" />
         <div className="max-w-3xl mx-auto flex items-center justify-between relative">
           <div className="flex items-center gap-3.5">
             <div
               className="w-11 h-11 rounded-lg flex items-center justify-center text-on-primary font-bold text-base"
-              style={{ backgroundColor: hotel.branding?.primaryColor || '#c9b4fa', color: hotel.branding?.primaryColor ? '#ffffff' : '#1b1938' }}
+              style={{ backgroundColor: hotel.branding?.primaryColor || '#cfe6ff', color: hotel.branding?.primaryColor ? '#ffffff' : '#0066cc' }}
             >
               {hotel.name.charAt(0)}
             </div>
@@ -374,7 +427,7 @@ export const GuestRoomView: React.FC = () => {
             <ShoppingBag className="w-4 h-4" />
             <span className="hidden sm:inline">Tray</span>
             {cartItemCount > 0 && (
-              <span className="bg-primary text-violet-soft text-[10px] font-extrabold w-5 h-5 rounded-full flex items-center justify-center">
+              <span className="bg-on-primary text-primary text-[10px] font-extrabold w-5 h-5 rounded-full flex items-center justify-center">
                 {cartItemCount}
               </span>
             )}
@@ -385,9 +438,21 @@ export const GuestRoomView: React.FC = () => {
       {/* Success Notification Banner */}
       {orderSuccessMsg && (
         <div className="max-w-3xl mx-auto px-4 pt-4">
-          <div className="bg-[#e7efee] border border-[#c9dcd9] text-[#0e3030] px-4 py-3 rounded-lg text-xs font-semibold flex items-center gap-2 shadow-xs">
-            <CheckCircle2 className="w-4 h-4 text-[#155555] shrink-0" />
-            <span>{orderSuccessMsg}</span>
+          <div className="bg-success-tint border border-success-line text-success-deep px-4 py-3 rounded-lg text-xs font-semibold flex items-center justify-between gap-3 shadow-xs flex-wrap">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-success-mid shrink-0" />
+              <span>{orderSuccessMsg}</span>
+            </div>
+            {lastWhatsAppUrl && (
+              <a
+                href={lastWhatsAppUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#25D366] hover:bg-[#1ebe5a] text-white text-[11px] font-bold shadow-xs transition-colors shrink-0"
+              >
+                <MessageCircle className="w-3.5 h-3.5" /> Also notify on WhatsApp
+              </a>
+            )}
           </div>
         </div>
       )}
@@ -443,14 +508,14 @@ export const GuestRoomView: React.FC = () => {
                 </button>
               ))}
 
-              <div className="h-4 w-px bg-[#e8e4dd] mx-1 shrink-0" />
+              <div className="h-4 w-px bg-hairline mx-1 shrink-0" />
 
               <button
                 onClick={() => setDietFilter(dietFilter === 'VEG' ? 'ALL' : 'VEG')}
                 className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap flex items-center gap-1 transition-colors ${
                   dietFilter === 'VEG'
-                    ? 'bg-[#155555] text-white'
-                    : 'bg-white text-[#0e3030] border border-[#c9dcd9]'
+                    ? 'bg-success-mid text-white'
+                    : 'bg-white text-success-deep border border-success-line'
                 }`}
               >
                 <Leaf className="w-3 h-3" /> Veg Only
@@ -459,10 +524,10 @@ export const GuestRoomView: React.FC = () => {
 
             {/* Food Menu Items List or Empty State */}
             {filteredFood.length === 0 ? (
-              <div className="bg-white border border-[#e8e4dd] rounded-xl p-10 text-center space-y-2 shadow-xs">
-                <Utensils className="w-8 h-8 text-[#1b1938] mx-auto opacity-60" />
-                <h3 className="font-bold text-sm text-[#292827]">No Menu Items Listed</h3>
-                <p className="text-xs text-[#73706d]">
+              <div className="bg-white border border-hairline rounded-xl p-10 text-center space-y-2 shadow-xs">
+                <Utensils className="w-8 h-8 text-[#0066cc] mx-auto opacity-60" />
+                <h3 className="font-bold text-sm text-ink">No Menu Items Listed</h3>
+                <p className="text-xs text-ink-mute">
                   The hotel kitchen has not added any food items to the dining menu yet.
                 </p>
               </div>
@@ -476,63 +541,63 @@ export const GuestRoomView: React.FC = () => {
                   return (
                     <div
                       key={item.id}
-                      className="bg-white border border-[#e8e4dd] rounded-xl p-4 shadow-xs flex flex-col justify-between"
+                      className="bg-white border border-hairline rounded-xl p-4 shadow-xs flex flex-col justify-between"
                     >
                       <div>
                         {item.imageUrl && (
                           <img
                             src={item.imageUrl}
                             alt={item.name}
-                            className="w-full h-28 object-cover rounded-lg border border-[#e8e4dd] mb-3"
+                            className="w-full h-28 object-cover rounded-lg border border-hairline mb-3"
                           />
                         )}
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <div className="flex items-center gap-1.5">
-                              <h3 className="font-bold text-sm text-[#292827]">{item.name}</h3>
+                              <h3 className="font-bold text-sm text-ink">{item.name}</h3>
                               {isVeg && (
-                                <span className="p-0.5 rounded-full bg-[#e7efee] text-[#155555] border border-[#c9dcd9] text-[10px]">
+                                <span className="p-0.5 rounded-full bg-success-tint text-success-mid border border-success-line text-[10px]">
                                   <Leaf className="w-3 h-3" />
                                 </span>
                               )}
                             </div>
-                            <span className="text-[10px] font-mono text-[#73706d] uppercase bg-[#fafaf8] px-2 py-0.5 rounded-md mt-1 inline-block">
+                            <span className="text-[10px] font-mono text-ink-mute uppercase bg-canvas-soft px-2 py-0.5 rounded-md mt-1 inline-block">
                               {item.category || 'Dining'}
                             </span>
                           </div>
 
-                          <div className="font-bold text-sm text-[#292827]">
+                          <div className="font-bold text-sm text-ink">
                             {hotel.currencySymbol || '$'}
                             {price}
                           </div>
                         </div>
 
                         {item.description && (
-                          <p className="text-xs text-[#73706d] mt-2 line-clamp-2">{item.description}</p>
+                          <p className="text-xs text-ink-mute mt-2 line-clamp-2">{item.description}</p>
                         )}
                       </div>
 
-                      <div className="mt-4 pt-3 border-t border-[#e8e4dd] flex items-center justify-between">
-                        <span className="text-[11px] text-[#73706d]">
+                      <div className="mt-4 pt-3 border-t border-hairline flex items-center justify-between">
+                        <span className="text-[11px] text-ink-mute">
                           ~{item.preparationTimeMinutes || 15} mins
                         </span>
 
                         {!item.isAvailable ? (
-                          <span className="text-xs font-semibold text-primary bg-[#ece6fb] px-2.5 py-1 rounded-full">
+                          <span className="text-xs font-semibold text-primary bg-accent-tint px-2.5 py-1 rounded-full">
                             Out of Stock
                           </span>
                         ) : inCartItem ? (
-                          <div className="flex items-center gap-2 bg-[#fafaf8] border border-[#e8e4dd] px-2 py-1 rounded-full">
+                          <div className="flex items-center gap-2 bg-canvas-soft border border-hairline px-2 py-1 rounded-full">
                             <button
                               onClick={() => updateQuantity(item.id, -1)}
-                              className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[#292827] font-bold shadow-xs hover:bg-[#e8e4dd]"
+                              className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-ink font-bold shadow-xs hover:bg-hairline"
                             >
                               -
                             </button>
                             <span className="text-xs font-mono font-bold">{inCartItem.quantity}</span>
                             <button
                               onClick={() => updateQuantity(item.id, 1)}
-                              className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-[#292827] font-bold shadow-xs hover:bg-[#e8e4dd]"
+                              className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-ink font-bold shadow-xs hover:bg-hairline"
                             >
                               +
                             </button>
@@ -540,7 +605,7 @@ export const GuestRoomView: React.FC = () => {
                         ) : (
                           <button
                             onClick={() => addToCart(item)}
-                            className="px-3.5 py-1.5 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-xs transition-colors"
+                            className="px-3.5 py-1.5 rounded-lg bg-[#0066cc] hover:bg-[#004fa3] text-white text-xs font-bold shadow-xs transition-colors"
                           >
                             + Add to Tray
                           </button>
@@ -558,10 +623,10 @@ export const GuestRoomView: React.FC = () => {
         {activeTab === 'services' && (
           <div className="space-y-4">
             {services.length === 0 ? (
-              <div className="bg-white border border-[#e8e4dd] rounded-xl p-10 text-center space-y-2 shadow-xs">
-                <Layers className="w-8 h-8 text-[#1b1938] mx-auto opacity-60" />
-                <h3 className="font-bold text-sm text-[#292827]">No Services Listed</h3>
-                <p className="text-xs text-[#73706d]">
+              <div className="bg-white border border-hairline rounded-xl p-10 text-center space-y-2 shadow-xs">
+                <Layers className="w-8 h-8 text-[#0066cc] mx-auto opacity-60" />
+                <h3 className="font-bold text-sm text-ink">No Services Listed</h3>
+                <p className="text-xs text-ink-mute">
                   The hotel has not configured any instant housekeeping or concierge services yet.
                 </p>
               </div>
@@ -570,34 +635,34 @@ export const GuestRoomView: React.FC = () => {
                 {services.map((service) => (
                   <div
                     key={service.id}
-                    className="bg-white border border-[#e8e4dd] rounded-xl p-4 shadow-xs flex flex-col justify-between"
+                    className="bg-white border border-hairline rounded-xl p-4 shadow-xs flex flex-col justify-between"
                   >
                     <div>
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <h3 className="font-bold text-sm text-[#292827]">{service.name}</h3>
-                          <span className="text-[10px] font-mono text-[#73706d] uppercase bg-[#fafaf8] px-2 py-0.5 rounded-md mt-1 inline-block">
+                          <h3 className="font-bold text-sm text-ink">{service.name}</h3>
+                          <span className="text-[10px] font-mono text-ink-mute uppercase bg-canvas-soft px-2 py-0.5 rounded-md mt-1 inline-block">
                             {service.categoryId || 'Service'}
                           </span>
                         </div>
-                        <span className="font-bold text-xs text-[#292827]">
+                        <span className="font-bold text-xs text-ink">
                           {service.price > 0 ? `${hotel.currencySymbol || '$'}${service.price}` : 'Complimentary'}
                         </span>
                       </div>
 
                       {service.description && (
-                        <p className="text-xs text-[#73706d] mt-2">{service.description}</p>
+                        <p className="text-xs text-ink-mute mt-2">{service.description}</p>
                       )}
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-[#e8e4dd] flex items-center justify-between">
-                      <span className="text-[11px] text-[#73706d]">
+                    <div className="mt-4 pt-3 border-t border-hairline flex items-center justify-between">
+                      <span className="text-[11px] text-ink-mute">
                         ~{service.slaMinutes || service.estimatedTimeMinutes || 15} mins SLA
                       </span>
 
                       <button
                         onClick={() => setSelectedService(service)}
-                        className="px-3.5 py-1.5 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-white text-xs font-bold shadow-xs transition-colors"
+                        className="px-3.5 py-1.5 rounded-lg bg-[#0066cc] hover:bg-[#004fa3] text-white text-xs font-bold shadow-xs transition-colors"
                       >
                         Request Service
                       </button>
@@ -613,10 +678,10 @@ export const GuestRoomView: React.FC = () => {
         {activeTab === 'orders' && (
           <div className="space-y-4">
             {guestOrders.length === 0 ? (
-              <div className="bg-white border border-[#e8e4dd] rounded-xl p-10 text-center space-y-2 shadow-xs">
-                <Clock className="w-8 h-8 text-[#1b1938] mx-auto opacity-60" />
-                <h3 className="font-bold text-sm text-[#292827]">No Active Room Orders</h3>
-                <p className="text-xs text-[#73706d]">
+              <div className="bg-white border border-hairline rounded-xl p-10 text-center space-y-2 shadow-xs">
+                <Clock className="w-8 h-8 text-[#0066cc] mx-auto opacity-60" />
+                <h3 className="font-bold text-sm text-ink">No Active Room Orders</h3>
+                <p className="text-xs text-ink-mute">
                   When you order food or request services, track their real-time progress right here.
                 </p>
               </div>
@@ -625,17 +690,17 @@ export const GuestRoomView: React.FC = () => {
                 {guestOrders.map((ord) => (
                   <div
                     key={ord.id}
-                    className="bg-white border border-[#e8e4dd] rounded-xl p-4 shadow-xs space-y-2.5"
+                    className="bg-white border border-hairline rounded-xl p-4 shadow-xs space-y-2.5"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#292827] capitalize">
+                      <span className="text-xs font-bold text-ink capitalize">
                         {ord.type || 'Order'} Request
                       </span>
                       <span
                         className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full ${
                           ['COMPLETED', 'DELIVERED'].includes((ord.status || '').toUpperCase())
-                            ? 'bg-[#e7efee] text-[#0e3030] border border-[#c9dcd9]'
-                            : 'bg-[#ece6fb] text-[#1b1938] border border-[#c9b4fa]'
+                            ? 'bg-success-tint text-success-deep border border-success-line'
+                            : 'bg-accent-tint text-[#0066cc] border border-accent-soft'
                         }`}
                       >
                         {ord.status || 'PENDING'}
@@ -643,22 +708,22 @@ export const GuestRoomView: React.FC = () => {
                     </div>
 
                     {ord.items && (
-                      <div className="bg-[#fafaf8] p-3 rounded-lg text-xs space-y-1 border border-[#e8e4dd]">
+                      <div className="bg-canvas-soft p-3 rounded-lg text-xs space-y-1 border border-hairline">
                         {ord.items.map((i: any, idx: number) => (
                           <div key={idx} className="flex justify-between">
                             <span>
                               {i.quantity || 1}x {i.name}
                             </span>
-                            <span className="font-mono text-[#292827]">
+                            <span className="font-mono text-ink">
                               {hotel.currencySymbol || '$'}
                               {(i.price || 0) * (i.quantity || 1)}
                             </span>
                           </div>
                         ))}
                         {ord.totalAmount > 0 && (
-                          <div className="flex justify-between font-bold pt-1 border-t border-[#e8e4dd]">
+                          <div className="flex justify-between font-bold pt-1 border-t border-hairline">
                             <span>Total:</span>
-                            <span className="text-[#1b1938]">
+                            <span className="text-[#0066cc]">
                               {hotel.currencySymbol || '$'}
                               {ord.totalAmount}
                             </span>
@@ -668,7 +733,15 @@ export const GuestRoomView: React.FC = () => {
                     )}
 
                     {ord.instructions && (
-                      <p className="text-xs text-[#73706d] italic">Note: "{ord.instructions}"</p>
+                      <p className="text-xs text-ink-mute italic">Note: "{ord.instructions}"</p>
+                    )}
+
+                    {['COMPLETED', 'DELIVERED'].includes((ord.status || '').toUpperCase()) && (
+                      <OrderFeedback
+                        order={ord}
+                        submitting={feedbackSubmittingId === ord.id}
+                        onSubmit={(rating, comment) => handleSubmitFeedback(ord.id, rating, comment)}
+                      />
                     )}
                   </div>
                 ))}
@@ -681,15 +754,15 @@ export const GuestRoomView: React.FC = () => {
       {/* Cart Drawer Modal */}
       {isCartOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-t-xl sm:rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-[#e8e4dd] max-h-[85vh] flex flex-col justify-between">
-            <div className="flex items-center justify-between border-b border-[#e8e4dd] pb-3">
+          <div className="bg-white rounded-t-xl sm:rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-hairline max-h-[85vh] flex flex-col justify-between">
+            <div className="flex items-center justify-between border-b border-hairline pb-3">
               <div className="flex items-center gap-2">
-                <ShoppingBag className="w-5 h-5 text-[#1b1938]" />
-                <h3 className="text-base font-bold text-[#292827]">In-Room Order Tray</h3>
+                <ShoppingBag className="w-5 h-5 text-[#0066cc]" />
+                <h3 className="text-base font-bold text-ink">In-Room Order Tray</h3>
               </div>
               <button
                 onClick={() => setIsCartOpen(false)}
-                className="p-1 rounded-full hover:bg-[#fafaf8] text-[#73706d]"
+                className="p-1 rounded-full hover:bg-canvas-soft text-ink-mute"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -697,32 +770,32 @@ export const GuestRoomView: React.FC = () => {
 
             <div className="overflow-y-auto space-y-3 flex-1">
               {cart.length === 0 ? (
-                <div className="text-center py-8 text-xs text-[#73706d]">Your tray is empty.</div>
+                <div className="text-center py-8 text-xs text-ink-mute">Your tray is empty.</div>
               ) : (
                 cart.map((item) => (
                   <div
                     key={item.foodItem.id}
-                    className="flex items-center justify-between p-3 rounded-lg bg-[#fafaf8] border border-[#e8e4dd]"
+                    className="flex items-center justify-between p-3 rounded-lg bg-canvas-soft border border-hairline"
                   >
                     <div>
-                      <div className="text-xs font-bold text-[#292827]">{item.foodItem.name}</div>
-                      <div className="text-[11px] text-[#73706d]">
+                      <div className="text-xs font-bold text-ink">{item.foodItem.name}</div>
+                      <div className="text-[11px] text-ink-mute">
                         {hotel.currencySymbol || '$'}
                         {item.price} each
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 bg-white border border-[#e8e4dd] px-2 py-1 rounded-full">
+                    <div className="flex items-center gap-2 bg-white border border-hairline px-2 py-1 rounded-full">
                       <button
                         onClick={() => updateQuantity(item.foodItem.id, -1)}
-                        className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs text-[#292827] hover:bg-[#fafaf8]"
+                        className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs text-ink hover:bg-canvas-soft"
                       >
                         -
                       </button>
                       <span className="text-xs font-mono font-bold">{item.quantity}</span>
                       <button
                         onClick={() => updateQuantity(item.foodItem.id, 1)}
-                        className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs text-[#292827] hover:bg-[#fafaf8]"
+                        className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs text-ink hover:bg-canvas-soft"
                       >
                         +
                       </button>
@@ -733,7 +806,7 @@ export const GuestRoomView: React.FC = () => {
 
               {cart.length > 0 && (
                 <div>
-                  <label className="block text-xs font-semibold text-[#292827] mb-1">
+                  <label className="block text-xs font-semibold text-ink mb-1">
                     Special Kitchen Instructions
                   </label>
                   <textarea
@@ -741,7 +814,7 @@ export const GuestRoomView: React.FC = () => {
                     value={specialInstructions}
                     onChange={(e) => setSpecialInstructions(e.target.value)}
                     placeholder="e.g. Extra spicy, no onions, bring cutlery..."
-                    className="w-full bg-white border border-[#e8e4dd] rounded-xl p-2.5 text-xs text-[#292827] focus:outline-none focus:border-[#292827]"
+                    className="w-full bg-white border border-hairline rounded-xl p-2.5 text-xs text-ink focus:outline-none focus:border-ink"
                   />
                 </div>
               )}
@@ -749,8 +822,24 @@ export const GuestRoomView: React.FC = () => {
 
             {cart.length > 0 && (
               /* The teal resolving band — the order's closing chord */
-              <div className="card-teal-band p-4 space-y-3">
-                <div className="flex items-center justify-between t-body-md font-bold text-on-primary">
+              <div className="card-teal-band p-4 space-y-2">
+                <div className="flex items-center justify-between text-xs text-on-dark-mute">
+                  <span>Subtotal:</span>
+                  <span className="font-mono">
+                    {hotel.currencySymbol || '$'}
+                    {cartSubtotal}
+                  </span>
+                </div>
+                {gstPercent > 0 && (
+                  <div className="flex items-center justify-between text-xs text-on-dark-mute">
+                    <span>GST ({gstPercent}%):</span>
+                    <span className="font-mono">
+                      {hotel.currencySymbol || '$'}
+                      {cartGstAmount}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between t-body-md font-bold text-on-primary pt-1 border-t border-hairline-dark">
                   <span>Total Amount:</span>
                   <span className="font-mono">
                     {hotel.currencySymbol || '$'}
@@ -774,21 +863,21 @@ export const GuestRoomView: React.FC = () => {
       {/* Service Request Confirmation Modal */}
       {selectedService && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-[#e8e4dd]">
-            <div className="flex items-center justify-between border-b border-[#e8e4dd] pb-3">
-              <h3 className="text-base font-bold text-[#292827]">Request: {selectedService.name}</h3>
+          <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-2xl border border-hairline">
+            <div className="flex items-center justify-between border-b border-hairline pb-3">
+              <h3 className="text-base font-bold text-ink">Request: {selectedService.name}</h3>
               <button
                 onClick={() => setSelectedService(null)}
-                className="p-1 rounded-full hover:bg-[#fafaf8] text-[#73706d]"
+                className="p-1 rounded-full hover:bg-canvas-soft text-ink-mute"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="space-y-3">
-              <p className="text-xs text-[#73706d]">{selectedService.description}</p>
+              <p className="text-xs text-ink-mute">{selectedService.description}</p>
               <div>
-                <label className="block text-xs font-semibold text-[#292827] mb-1">
+                <label className="block text-xs font-semibold text-ink mb-1">
                   Specific Requests or Notes
                 </label>
                 <textarea
@@ -796,16 +885,43 @@ export const GuestRoomView: React.FC = () => {
                   value={serviceNotes}
                   onChange={(e) => setServiceNotes(e.target.value)}
                   placeholder="e.g. Please deliver 2 extra towels to the bathroom..."
-                  className="w-full bg-white border border-[#e8e4dd] rounded-xl p-2.5 text-xs text-[#292827] focus:outline-none focus:border-[#292827]"
+                  className="w-full bg-white border border-hairline rounded-xl p-2.5 text-xs text-ink focus:outline-none focus:border-ink"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-ink mb-1">How urgent is this?</label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setServicePriority('NORMAL')}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-colors ${
+                      servicePriority === 'NORMAL'
+                        ? 'bg-[#0066cc] text-white border-[#0066cc]'
+                        : 'bg-white text-ink-mute border-hairline'
+                    }`}
+                  >
+                    Normal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setServicePriority('URGENT')}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-colors ${
+                      servicePriority === 'URGENT'
+                        ? 'bg-[#e00b41] text-white border-[#e00b41]'
+                        : 'bg-white text-ink-mute border-hairline'
+                    }`}
+                  >
+                    Urgent
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#e8e4dd]">
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-hairline">
               <button
                 type="button"
                 onClick={() => setSelectedService(null)}
-                className="px-4 py-2 rounded-full border border-[#e8e4dd] text-xs font-semibold text-[#73706d]"
+                className="px-4 py-2 rounded-full border border-hairline text-xs font-semibold text-ink-mute"
               >
                 Cancel
               </button>
@@ -813,12 +929,82 @@ export const GuestRoomView: React.FC = () => {
                 type="button"
                 onClick={handleRequestService}
                 disabled={isSubmittingOrder}
-                className="px-5 py-2 rounded-lg bg-[#1b1938] hover:bg-[#0e0c1f] text-xs font-bold text-white shadow-sm disabled:opacity-50"
+                className="px-5 py-2 rounded-lg bg-[#0066cc] hover:bg-[#004fa3] text-xs font-bold text-white shadow-sm disabled:opacity-50"
               >
                 {isSubmittingOrder ? 'Dispatching...' : 'Confirm Request'}
               </button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** 5-star rating + optional comment for a completed order. Submits once. */
+const OrderFeedback: React.FC<{
+  order: any;
+  submitting: boolean;
+  onSubmit: (rating: number, comment: string) => void;
+}> = ({ order, submitting, onSubmit }) => {
+  const existing = order.guestFeedback;
+  const [rating, setRating] = useState<number>(existing?.rating || 0);
+  const [comment, setComment] = useState<string>(existing?.comment || '');
+  const [hover, setHover] = useState<number>(0);
+
+  if (existing?.rating) {
+    return (
+      <div className="pt-2 border-t border-hairline flex items-center gap-1.5">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <Star
+            key={n}
+            className={`w-3.5 h-3.5 ${n <= existing.rating ? 'fill-amber-400 text-amber-400' : 'text-hairline'}`}
+          />
+        ))}
+        <span className="text-[11px] text-ink-mute ml-1">Thanks for the feedback!</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pt-2 border-t border-hairline space-y-2">
+      <div className="flex items-center gap-1">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => setRating(n)}
+            onMouseEnter={() => setHover(n)}
+            onMouseLeave={() => setHover(0)}
+            className="p-0.5"
+            aria-label={`Rate ${n} star${n > 1 ? 's' : ''}`}
+          >
+            <Star
+              className={`w-4.5 h-4.5 ${
+                n <= (hover || rating) ? 'fill-amber-400 text-amber-400' : 'text-hairline'
+              }`}
+            />
+          </button>
+        ))}
+        <span className="text-[11px] text-ink-mute ml-1">Rate this order</span>
+      </div>
+      {rating > 0 && (
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="Optional comment..."
+            className="flex-1 bg-canvas-soft border border-hairline rounded-lg px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-ink"
+          />
+          <button
+            type="button"
+            onClick={() => onSubmit(rating, comment)}
+            disabled={submitting}
+            className="px-3 py-1.5 rounded-lg bg-[#0066cc] hover:bg-[#004fa3] text-white text-[11px] font-bold disabled:opacity-50 shrink-0"
+          >
+            {submitting ? 'Sending…' : 'Submit'}
+          </button>
         </div>
       )}
     </div>
