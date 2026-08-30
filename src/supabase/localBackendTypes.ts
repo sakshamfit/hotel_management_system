@@ -27,3 +27,13 @@ export interface LocalError {
   details?: string;
   hint?: string;
 }
+
+/**
+ * A demo-mode password reset request. Demo mode has no mail provider, so the
+ * reset link is returned to the UI instead of being emailed.
+ */
+export interface DemoPasswordReset {
+  email: string;
+  token: string;
+  expiresAt: number;
+}

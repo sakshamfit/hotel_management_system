@@ -227,8 +227,95 @@ async function main() {
   const ho = await supabase.from('hotels').select('*').eq('id', hotelId).maybeSingle();
   ok(ho.data === null, 'hotel admin cannot read another hotel');
 
+  // Cleanup must run as super admin: deleteHotelUser() drops the smoke admin's
+  // session, and an anonymous caller is not allowed to delete the hotel row.
+  await supabase.auth.signOut();
+  const saCleanup = await supabase.auth.signInWithPassword({ email: 'admin@nexora.test', password: 'nexora123' });
+  ok(!saCleanup.error, 're-signed in as super admin for cleanup');
   await demoBackend!.deleteHotelUser('admin@smoke.demo');
-  await supabase.from('hotels').delete().eq('id', newHotelId);
+  const smokeDeleted = await supabase.from('hotels').delete().eq('id', newHotelId);
+  ok(!smokeDeleted.error, 'smoke hotel removed');
+
+  // ---- 7. Self-service sign-up + password recovery --------------------------
+  console.log('7. Sign-up, sign-in and password recovery');
+  await supabase.auth.signOut();
+
+  const OWNER_EMAIL = 'sakshamfitz@gmail.com';
+  const missing = await supabase.auth.signInWithPassword({ email: OWNER_EMAIL, password: 'whatever123' });
+  ok(!!missing.error && missing.error.code === 'invalid_credentials', 'unknown email is rejected before sign-up');
+
+  const weak = await supabase.auth.signUp({ email: OWNER_EMAIL, password: '123' });
+  ok(!!weak.error && weak.error.code === 'weak_password', 'short password rejected on sign-up');
+
+  const badEmail = await supabase.auth.signUp({ email: 'not-an-email', password: 'owner12345' });
+  ok(!!badEmail.error && badEmail.error.code === 'invalid_email', 'malformed email rejected on sign-up');
+
+  const signup = await supabase.auth.signUp({
+    email: OWNER_EMAIL,
+    password: 'owner12345',
+    options: { data: { display_name: 'Saksham' } },
+  });
+  ok(!signup.error && !!signup.data.session, 'self-service sign-up creates a session');
+  const ownerUid: string = signup.data.user.id;
+
+  const ownerProfile: any = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', ownerUid)
+    .maybeSingle();
+  ok(ownerProfile.data?.role === 'super_admin', 'signed-up account is provisioned as super_admin');
+
+  const duplicate = await supabase.auth.signUp({ email: OWNER_EMAIL.toUpperCase(), password: 'owner12345' });
+  ok(!!duplicate.error && duplicate.error.code === 'user_already_exists', 'duplicate email rejected (case-insensitive)');
+
+  await supabase.auth.signOut();
+  const ownerLogin = await supabase.auth.signInWithPassword({ email: OWNER_EMAIL, password: 'owner12345' });
+  ok(!ownerLogin.error && !!ownerLogin.data.session, 'signed-up account can sign in');
+  ok(ownerLogin.data.user.user_metadata?.display_name === 'Saksham', 'display name stored in user_metadata');
+  const ownerHotels: any = await supabase.from('hotels').select('*');
+  ok(ownerHotels.data?.length === 1, 'new super admin can read all hotels');
+  await supabase.auth.signOut();
+
+  // Forgot password: no mail provider in demo mode, so a reset URL is returned.
+  const unknownReset = demoBackend!.startPasswordReset('nobody@nowhere.test');
+  ok(unknownReset.emailExists === false && unknownReset.resetUrl === null, 'unknown email gets no reset link');
+
+  const reset = demoBackend!.startPasswordReset(OWNER_EMAIL);
+  ok(!!reset.resetToken && !!reset.resetUrl, 'reset link issued for an existing account');
+  ok(
+    !!reset.resetUrl && reset.resetUrl.includes('type=recovery') && !/[?&]token=/.test(reset.resetUrl),
+    'reset URL uses reset_token (never the guest QR `token` param)'
+  );
+
+  const wrongToken = demoBackend!.completePasswordReset('not-a-real-token', 'brandnew123');
+  ok(wrongToken.success === false, 'bogus reset token rejected');
+
+  const tooShort = demoBackend!.completePasswordReset(reset.resetToken!, 'abc');
+  ok(tooShort.success === false, 'short new password rejected');
+
+  const applied = demoBackend!.completePasswordReset(reset.resetToken!, 'brandnew123');
+  ok(applied.success === true && applied.email === OWNER_EMAIL, 'password reset applied');
+
+  const replay = demoBackend!.completePasswordReset(reset.resetToken!, 'anotherone1');
+  ok(replay.success === false, 'reset token is single-use');
+
+  const oldPassword = await supabase.auth.signInWithPassword({ email: OWNER_EMAIL, password: 'owner12345' });
+  ok(!!oldPassword.error, 'old password no longer works');
+
+  const newPassword = await supabase.auth.signInWithPassword({ email: OWNER_EMAIL, password: 'brandnew123' });
+  ok(!newPassword.error && !!newPassword.data.session, 'sign-in works with the new password');
+
+  // updateUser() path (used by the real-Supabase recovery screen).
+  const pwdUpdate = await supabase.auth.updateUser({ password: 'rotated999' });
+  ok(!pwdUpdate.error, 'updateUser changes the password while signed in');
+  await supabase.auth.signOut();
+  const rotated = await supabase.auth.signInWithPassword({ email: OWNER_EMAIL, password: 'rotated999' });
+  ok(!rotated.error, 'sign-in works after updateUser');
+
+  await demoBackend!.deleteHotelUser(OWNER_EMAIL);
+  const gone = await supabase.auth.signInWithPassword({ email: OWNER_EMAIL, password: 'rotated999' });
+  ok(!!gone.error, 'account removal cleans up the demo store');
+  await supabase.auth.signOut();
 
   console.log('');
   if (failures === 0) {

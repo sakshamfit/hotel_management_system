@@ -22,6 +22,24 @@ Demo mode is visible as a **Demo** badge in the header and a demo panel on the
 login screen. It is never active once real credentials are configured below —
 the demo users and seeded data only exist inside the local store.
 
+### Sign-in, sign-up and password recovery
+
+Only the two accounts above exist in a fresh demo store, so signing in with any
+other address (e.g. your own Gmail) correctly reports *invalid credentials*.
+Two ways forward, both on the login screen:
+
+- **Create one** — demo mode allows self-service sign-up with any email. The
+  account is stored in this browser's localStorage and is provisioned as
+  `super_admin`, so every console is reachable immediately.
+- **Forgot password?** — demo mode has no mail provider, so instead of an email
+  the reset link is shown on screen (`/?type=recovery&reset_token=…`). Tokens
+  are single-use and expire after an hour. Note the parameter is `reset_token`,
+  never `token`, which the guest QR flow already uses.
+
+With real credentials configured, "Create one" is hidden (the `profiles` table
+has no insert policy for `authenticated` users — see §3) and "Forgot password?"
+emails a Supabase recovery link instead.
+
 ## 1. Create the project (only for going live)
 
 1. Create a Supabase project (supabase.com → New project). Note the project
@@ -31,6 +49,10 @@ the demo users and seeded data only exist inside the local store.
      done by the super admin, so leave "Allow new users to sign up" off).
    - Enable **Anonymous sign-ins** (required for QR guest sessions).
    - Optionally enable **Google** for staff SSO.
+   - **Authentication → URL Configuration**: add your deployed origin (and
+     `http://localhost:3000` for dev) to **Redirect URLs**. Password-recovery
+     links redirect back to `window.location.origin` and are rejected if the
+     origin is not allow-listed.
 3. **Project Settings → API**: copy the **Project URL**, the **anon public**
    key, and the **service_role** key (server only — never ship it).
 

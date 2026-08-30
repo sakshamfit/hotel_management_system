@@ -1,10 +1,70 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
-import { supabase } from '../supabase/config';
+import { supabase, demoBackend, isDemoMode } from '../supabase/config';
 import { firestoreService } from '../services/firestoreService';
 import { ensureGuestSession, clearGuestSessionCache, GuestSessionError } from '../services/guestSession';
 import type { GuestSessionInfo } from '../services/guestSession';
 import { User, Hotel, UserRole } from '../types';
+
+/** Minimum length enforced by the UI for new/changed passwords. */
+export const MIN_PASSWORD_LENGTH = 8;
+
+/**
+ * A password-recovery request parsed out of the landing URL.
+ *
+ *   • supabase-session — implicit flow (`#access_token=…&type=recovery`).
+ *   • supabase-code    — PKCE flow (`?code=…&type=recovery`).
+ *   • demo             — local demo backend (`?type=recovery&reset_token=…`),
+ *                        because demo mode has no mail provider to send a link.
+ *
+ * `config.ts` sets `detectSessionInUrl: false`, so nothing here happens
+ * automatically — the recovery link has to be exchanged by hand below.
+ */
+export type RecoveryParams =
+  | { kind: 'supabase-session'; accessToken: string; refreshToken: string }
+  | { kind: 'supabase-code'; code: string }
+  | { kind: 'demo'; token: string };
+
+/** Reads recovery params from the query string and/or the URL hash. */
+export function parseRecoveryParams(loc: Pick<Location, 'search' | 'hash'> = window.location): RecoveryParams | null {
+  const query = new URLSearchParams(loc.search);
+  const hash = new URLSearchParams(loc.hash.startsWith('#') ? loc.hash.slice(1) : loc.hash);
+  const pick = (key: string): string | null => query.get(key) || hash.get(key) || null;
+
+  if (pick('type') === 'recovery') {
+    const accessToken = pick('access_token');
+    const refreshToken = pick('refresh_token');
+    if (accessToken && refreshToken) return { kind: 'supabase-session', accessToken, refreshToken };
+    const code = pick('code');
+    if (code) return { kind: 'supabase-code', code };
+  }
+
+  const resetToken = pick('reset_token');
+  if (resetToken) return { kind: 'demo', token: resetToken };
+  return null;
+}
+
+/** Removes recovery params from the address bar so a reload does not replay them. */
+function stripRecoveryParamsFromUrl(): void {
+  if (typeof window === 'undefined' || !window.history?.replaceState) return;
+  const url = new URL(window.location.href);
+  for (const key of ['type', 'code', 'access_token', 'refresh_token', 'expires_in', 'token_type', 'reset_token']) {
+    url.searchParams.delete(key);
+  }
+  url.hash = '';
+  const qs = url.searchParams.toString();
+  const next = `${url.pathname}${qs ? `?${qs}` : ''}`;
+  window.history.replaceState(window.history.state, '', next);
+}
+
+/** Outcome of resolving a Supabase auth user into an app role. */
+type ClaimsResult =
+  | { ok: true }
+  | { ok: false; code: 'no_role' | 'no_hotel'; message: string };
+
+const NO_ROLE_MESSAGE =
+  'This email can sign in, but no NEXORA role is provisioned for it yet. ' +
+  'Ask the platform owner to run: npm run create-super-admin -- --email you@example.com';
 
 interface AuthContextType {
   user: User | null;
@@ -21,7 +81,21 @@ interface AuthContextType {
   isLoading: boolean;
   selectedTenantId: string | null;
   setSelectedTenantId: (id: string | null) => void;
+  /** Set when a sign-in succeeded at the auth layer but the app rejected it. */
+  authError: string | null;
+  clearAuthError: () => void;
+  /** True when running on the local demo backend (self-service sign-up works). */
+  demoMode: boolean;
+  /** Recovery link found in the URL, if any. */
+  recoveryParams: RecoveryParams | null;
   loginWithCredentials: (email: string, pass: string) => Promise<void>;
+  signUpWithCredentials: (email: string, pass: string, displayName?: string) => Promise<void>;
+  /** Emails a reset link (real mode) or returns the local reset URL (demo mode). */
+  requestPasswordReset: (email: string) => Promise<{ demoResetUrl?: string }>;
+  /** Exchanges a Supabase recovery link for a session. Returns the account email. */
+  beginPasswordRecovery: () => Promise<{ email: string }>;
+  /** Sets the new password for the account being recovered. */
+  completePasswordReset: (newPassword: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   switchHotelTenant: (hotelId: string) => Promise<void>;
   refreshClaims: () => Promise<void>;
@@ -41,6 +115,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [guestSession, setGuestSession] = useState<GuestSessionInfo | null>(null);
   const [guestSessionError, setGuestSessionError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [recoveryParams, setRecoveryParams] = useState<RecoveryParams | null>(null);
 
   // Check URL token for Guest Room QR scan.
   useEffect(() => {
@@ -49,8 +125,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (urlToken) {
       setGuestRoomToken(urlToken);
       setActiveExperience('guest_experience');
+      return;
+    }
+
+    // A password-recovery link takes priority over the login screen (and is
+    // never a room token — the demo backend uses `reset_token`).
+    const recovery = parseRecoveryParams();
+    if (recovery) {
+      setRecoveryParams(recovery);
+      setActiveExperience('login');
     }
   }, []);
+
+  const clearAuthError = useCallback(() => setAuthError(null), []);
 
   const signOutClient = useCallback(async () => {
     try {
@@ -65,7 +152,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Resolve a signed-in auth user into an app User (staff) or guest.
   const processUserClaims = useCallback(
-    async (sbUser: SupabaseUser, session: Session | null) => {
+    async (sbUser: SupabaseUser, session: Session | null): Promise<ClaimsResult> => {
       const isAnon = (sbUser as any).is_anonymous === true;
       const urlHasToken = !!new URLSearchParams(window.location.search).get('token');
 
@@ -75,7 +162,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await signOutClient();
           setGuestSession(null);
           setActiveExperience('login');
-          return;
+          return { ok: true };
         }
         setUser({
           id: sbUser.id,
@@ -89,7 +176,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setHotel(null);
         setSelectedTenantIdState(null);
         setActiveExperience('guest_experience');
-        return;
+        return { ok: true };
       }
 
       // Staff: read role + hotelId from the profiles table.
@@ -98,10 +185,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const hotelId = roleDoc?.hotelId;
 
       if (role !== 'super_admin' && role !== 'hotel_admin') {
+        // Auth succeeded but this account has no `profiles` row. Fail loudly
+        // instead of bouncing back to the login form with no explanation.
         console.warn(`User ${sbUser.id} (${sbUser.email}) has no provisioned role. Signing out.`);
         await signOutClient();
+        setAuthError(NO_ROLE_MESSAGE);
         setActiveExperience('login');
-        return;
+        return { ok: false, code: 'no_role', message: NO_ROLE_MESSAGE };
       }
 
       const normalizedRole: UserRole = role === 'super_admin' ? 'super_admin' : 'hotel_admin';
@@ -118,16 +208,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (normalizedRole === 'super_admin') {
         setActiveExperience('super_admin');
-      } else if (normalizedRole === 'hotel_admin' && hotelId) {
+        return { ok: true };
+      }
+      if (normalizedRole === 'hotel_admin' && hotelId) {
         setSelectedTenantIdState(hotelId);
         setActiveExperience('hotel_os');
         const hotelDoc = await firestoreService.getHotel(hotelId);
         setHotel(hotelDoc);
-      } else {
-        console.warn(`Hotel admin ${sbUser.id} has no hotelId. Signing out.`);
-        await signOutClient();
-        setActiveExperience('login');
+        return { ok: true };
       }
+
+      const noHotelMessage =
+        'This hotel-admin account is not linked to a hotel yet. Ask the platform owner to re-assign it from the Super Admin console.';
+      console.warn(`Hotel admin ${sbUser.id} has no hotelId. Signing out.`);
+      await signOutClient();
+      setAuthError(noHotelMessage);
+      setActiveExperience('login');
+      return { ok: false, code: 'no_hotel', message: noHotelMessage };
     },
     [signOutClient]
   );
@@ -225,13 +322,137 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginWithCredentials = async (email: string, pass: string) => {
     setIsLoading(true);
+    setAuthError(null);
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: pass.trim(),
       });
       if (error) throw error;
-      if (data.user && data.session) await processUserClaims(data.user, data.session);
+      if (data.user && data.session) {
+        // Surface a rejected-but-authenticated account as an error so the
+        // login form can explain it instead of silently doing nothing.
+        const result = await processUserClaims(data.user, data.session);
+        if (result && result.ok === false) throw new Error(result.message);
+      }
+    } catch (err: any) {
+      setAuthError(err?.message || 'Sign-in failed. Please try again.');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Self-service registration. Only meaningful on the demo backend: with a
+   * real Supabase project the `profiles` table is written by the service role
+   * (see migration 0001 — no insert policy for `authenticated`), so accounts
+   * are provisioned by `npm run create-super-admin` / the Super Admin console.
+   */
+  const signUpWithCredentials = async (email: string, pass: string, displayName?: string) => {
+    setIsLoading(true);
+    setAuthError(null);
+    try {
+      if (!demoBackend) {
+        throw new Error(
+          'Account creation is disabled on this deployment. Ask the platform owner to provision your email.'
+        );
+      }
+      if (pass.trim().length < MIN_PASSWORD_LENGTH) {
+        throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      }
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: pass,
+        options: { data: displayName ? { display_name: displayName.trim() } : undefined },
+      });
+      if (error) throw error;
+      if (data?.user && data?.session) {
+        const result = await processUserClaims(data.user, data.session);
+        if (result && result.ok === false) throw new Error(result.message);
+      }
+    } catch (err: any) {
+      setAuthError(err?.message || 'Could not create the account.');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Starts password recovery for an address.
+   * Real Supabase: emails a reset link (the origin must be allow-listed in
+   * Auth → URL Configuration → Redirect URLs).
+   * Demo mode: no mail provider, so the reset URL is returned to the caller.
+   */
+  const requestPasswordReset = async (email: string): Promise<{ demoResetUrl?: string }> => {
+    const clean = email.trim();
+    if (demoBackend) {
+      const res = demoBackend.startPasswordReset(clean);
+      return { demoResetUrl: res.resetUrl || undefined };
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(clean, {
+      redirectTo: `${window.location.origin}/`,
+    });
+    if (error) throw error;
+    return {};
+  };
+
+  /** Exchanges a Supabase recovery link for a session. Demo links need none. */
+  const beginPasswordRecovery = async (): Promise<{ email: string }> => {
+    if (!recoveryParams) throw new Error('No password reset link was detected.');
+    if (recoveryParams.kind === 'demo') return { email: '' };
+
+    setIsLoading(true);
+    try {
+      const { data, error } =
+        recoveryParams.kind === 'supabase-code'
+          ? await supabase.auth.exchangeCodeForSession(recoveryParams.code)
+          : await supabase.auth.setSession({
+              access_token: recoveryParams.accessToken,
+              refresh_token: recoveryParams.refreshToken,
+            });
+      if (error) throw error;
+      return { email: data?.user?.email || '' };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /** Sets the new password, then lands the user in the app. */
+  const completePasswordReset = async (newPassword: string) => {
+    setIsLoading(true);
+    setAuthError(null);
+    try {
+      if (newPassword.length < MIN_PASSWORD_LENGTH) {
+        throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      }
+
+      if (demoBackend && recoveryParams?.kind === 'demo') {
+        const res = demoBackend.completePasswordReset(recoveryParams.token, newPassword);
+        if (!res.success) throw new Error(res.message || 'Could not reset the password.');
+        setRecoveryParams(null);
+        stripRecoveryParamsFromUrl();
+        // Demo mode has no session from the link — sign straight in.
+        await loginWithCredentials(res.email || '', newPassword);
+        return;
+      }
+
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      setRecoveryParams(null);
+      stripRecoveryParamsFromUrl();
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (session?.user) {
+        const result = await processUserClaims(session.user, session);
+        if (result && result.ok === false) throw new Error(result.message);
+      }
+    } catch (err: any) {
+      setAuthError(err?.message || 'Could not reset the password.');
+      throw err;
     } finally {
       setIsLoading(false);
     }
@@ -291,6 +512,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await signOutClient();
     setGuestSession(null);
     clearGuestSessionCache();
+    setAuthError(null);
+    setRecoveryParams(null);
     setActiveExperience('login');
   };
 
@@ -310,7 +533,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         selectedTenantId,
         setSelectedTenantId,
+        authError,
+        clearAuthError,
+        demoMode: isDemoMode,
+        recoveryParams,
         loginWithCredentials,
+        signUpWithCredentials,
+        requestPasswordReset,
+        beginPasswordRecovery,
+        completePasswordReset,
         loginWithGoogle,
         switchHotelTenant,
         refreshClaims,

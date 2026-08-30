@@ -20,7 +20,7 @@
  */
 
 import { buildDemoSeed, buildDemoAuthUsers } from './demoSeed';
-import type { DemoRow, DemoAuthUser, LocalError } from './localBackendTypes';
+import type { DemoRow, DemoAuthUser, DemoPasswordReset, LocalError } from './localBackendTypes';
 
 const STORAGE_VERSION = 'nexora.demo.v1';
 
@@ -57,6 +57,8 @@ interface DemoState {
   tables: Record<string, DemoRow[]>;
   users: DemoAuthUser[];
   session: { token: string; userId: string } | null;
+  /** Pending password-reset requests (demo mode has no mail provider). */
+  passwordResets: DemoPasswordReset[];
 }
 
 // ---------------------------------------------------------------------------
@@ -72,14 +74,20 @@ function loadState(): DemoState {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && parsed.version === STORAGE_VERSION && parsed.tables && parsed.users) {
-          return { tables: parsed.tables, users: parsed.users, session: parsed.session || null };
+          return {
+            tables: parsed.tables,
+            users: parsed.users,
+            session: parsed.session || null,
+            // Optional in state written before password resets existed.
+            passwordResets: Array.isArray(parsed.passwordResets) ? parsed.passwordResets : [],
+          };
         }
       }
     } catch {
       /* corrupted — fall through to fresh seed */
     }
   }
-  return { tables: buildDemoSeed(), users: buildDemoAuthUsers(), session: null };
+  return { tables: buildDemoSeed(), users: buildDemoAuthUsers(), session: null, passwordResets: [] };
 }
 
 function saveState(state: DemoState): void {
@@ -87,7 +95,13 @@ function saveState(state: DemoState): void {
   try {
     localStorage.setItem(
       STORAGE_VERSION,
-      JSON.stringify({ version: STORAGE_VERSION, tables: state.tables, users: state.users, session: state.session })
+      JSON.stringify({
+        version: STORAGE_VERSION,
+        tables: state.tables,
+        users: state.users,
+        session: state.session,
+        passwordResets: state.passwordResets,
+      })
     );
   } catch {
     /* quota / private mode — demo keeps working in memory */
@@ -753,9 +767,209 @@ function localDeleteHotelUser(email: string): Promise<Record<string, any>> {
   return Promise.resolve({ success: true, message: 'User deleted (or was already absent).' });
 }
 
-function localResetPassword(_email: string): Promise<Record<string, any>> {
-  // Demo mode has no mail provider; passwords are set by the admin UI.
-  return Promise.resolve({});
+// ---------------------------------------------------------------------------
+// Self-service accounts + password recovery (demo mode)
+//
+// Demo mode has no mail provider and no service-role server, so the pieces
+// Supabase normally provides are emulated locally:
+//   • signUp() creates the auth user AND its `profiles` row (role
+//     'super_admin' — the demo store is local to the browser, so a new
+//     account needs a role before any screen will render).
+//   • Password recovery issues a single-use token and hands the reset URL
+//     back to the UI instead of emailing it.
+// ---------------------------------------------------------------------------
+
+const MIN_PASSWORD_LENGTH = 6;
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour, matching Supabase's default
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeEmail(email: string): string {
+  return String(email || '').trim().toLowerCase();
+}
+
+function findUserByEmail(email: string): DemoAuthUser | null {
+  const target = normalizeEmail(email);
+  if (!target) return null;
+  return state.users.find((u) => normalizeEmail(u.email || '') === target) || null;
+}
+
+function passwordTooShort(password: string): boolean {
+  return String(password || '').length < MIN_PASSWORD_LENGTH;
+}
+
+/** Writes the `profiles` row that turns an auth user into staff. */
+function provisionDemoProfile(args: {
+  uid: string;
+  email: string;
+  displayName?: string;
+  role?: 'super_admin' | 'hotel_admin';
+  hotelId?: string | null;
+}): void {
+  const role = args.role || 'super_admin';
+  const row = {
+    role,
+    hotel_id: args.hotelId ?? null,
+    email: normalizeEmail(args.email),
+    display_name: args.displayName || 'Super Admin',
+    phone: '',
+  };
+  const existing = (state.tables.profiles || []).find((p) => p.id === args.uid);
+  if (existing) {
+    directUpdate('profiles', args.uid, row);
+  } else {
+    directInsert('profiles', { id: args.uid, ...row, created_at: nowIso() });
+  }
+}
+
+function resetTokenList(): DemoPasswordReset[] {
+  if (!Array.isArray(state.passwordResets)) state.passwordResets = [];
+  // Drop expired entries on every access.
+  const now = Date.now();
+  state.passwordResets = state.passwordResets.filter((r) => r.expiresAt > now);
+  return state.passwordResets;
+}
+
+function resetUrlFor(token: string): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  // `reset_token` (not `token`) so it never collides with the guest QR param.
+  return `${origin}/?type=recovery&reset_token=${encodeURIComponent(token)}`;
+}
+
+function localSignUp(args: {
+  email: string;
+  password: string;
+  data?: Record<string, any>;
+}): { data: { user: Record<string, any> | null; session: DemoSession | null }; error: LocalError | null } {
+  const email = normalizeEmail(args.email);
+  if (!EMAIL_RE.test(email)) {
+    return {
+      data: { user: null, session: null },
+      error: { message: 'Email address is not valid.', code: 'invalid_email' },
+    };
+  }
+  if (passwordTooShort(args.password)) {
+    return {
+      data: { user: null, session: null },
+      error: {
+        message: `Password should be at least ${MIN_PASSWORD_LENGTH} characters.`,
+        code: 'weak_password',
+      },
+    };
+  }
+  if (findUserByEmail(email)) {
+    return {
+      data: { user: null, session: null },
+      error: { message: 'User already registered', code: 'user_already_exists' },
+    };
+  }
+
+  const displayName = args.data?.display_name || 'Super Admin';
+  const user: DemoAuthUser = {
+    id: uuid(),
+    email,
+    password: String(args.password),
+    is_anonymous: false,
+    role: 'authenticated',
+    user_metadata: { ...(args.data || {}), display_name: displayName },
+    app_metadata: { provider: 'email' },
+    created_at: nowIso(),
+    updated_at: nowIso(),
+    confirmed_at: nowIso(),
+  };
+  state.users.push(user);
+  provisionDemoProfile({ uid: user.id, email, displayName, role: 'super_admin' });
+
+  const session = buildSession(user);
+  queueMicrotask(() => emitAuthChange('SIGNED_IN', session));
+  return { data: { user: publicUser(user), session }, error: null };
+}
+
+function localUpdateUser(attrs: {
+  password?: string;
+  data?: Record<string, any>;
+}): { data: { user: Record<string, any> | null }; error: LocalError | null } {
+  const user = currentUser();
+  if (!user) {
+    return { data: { user: null }, error: { message: 'Not signed in.', code: 'not_authenticated' } };
+  }
+  if (attrs.password !== undefined) {
+    if (passwordTooShort(attrs.password)) {
+      return {
+        data: { user: null },
+        error: {
+          message: `Password should be at least ${MIN_PASSWORD_LENGTH} characters.`,
+          code: 'weak_password',
+        },
+      };
+    }
+    user.password = String(attrs.password);
+  }
+  if (attrs.data) user.user_metadata = { ...user.user_metadata, ...attrs.data };
+  user.updated_at = nowIso();
+  scheduleSave(state);
+  return { data: { user: publicUser(user) }, error: null };
+}
+
+/**
+ * Issues a single-use reset token for an existing account. Returns
+ * `emailExists: false` for unknown addresses (the UI still shows a generic
+ * "if that account exists…" confirmation, exactly like Supabase).
+ */
+function localStartPasswordReset(email: string): {
+  emailExists: boolean;
+  resetToken: string | null;
+  resetUrl: string | null;
+} {
+  const user = findUserByEmail(email);
+  if (!user?.email) return { emailExists: false, resetToken: null, resetUrl: null };
+
+  const target = normalizeEmail(user.email);
+  const list = resetTokenList();
+  // Supersede any earlier, still-valid request for this address.
+  for (let i = list.length - 1; i >= 0; i--) if (list[i].email === target) list.splice(i, 1);
+
+  const token = makeToken();
+  list.push({ email: target, token, expiresAt: Date.now() + RESET_TOKEN_TTL_MS });
+  scheduleSave(state);
+  return { emailExists: true, resetToken: token, resetUrl: resetUrlFor(token) };
+}
+
+function localCompletePasswordReset(
+  token: string,
+  newPassword: string
+): { success: boolean; email?: string; message?: string } {
+  const list = resetTokenList();
+  const idx = list.findIndex((r) => r.token === token);
+  if (idx === -1) {
+    return {
+      success: false,
+      message: 'This reset link is invalid or has expired. Please request a new one.',
+    };
+  }
+  const user = findUserByEmail(list[idx].email);
+  if (!user) {
+    list.splice(idx, 1);
+    scheduleSave(state);
+    return { success: false, message: 'That account no longer exists.' };
+  }
+  if (passwordTooShort(newPassword)) {
+    return {
+      success: false,
+      message: `Password should be at least ${MIN_PASSWORD_LENGTH} characters.`,
+    };
+  }
+
+  user.password = String(newPassword);
+  user.updated_at = nowIso();
+  list.splice(idx, 1); // single use
+  scheduleSave(state);
+  return { success: true, email: user.email || undefined };
+}
+
+/** Kept for the `demoBackend.resetPassword` surface used by older callers. */
+function localResetPassword(email: string): Promise<Record<string, any>> {
+  return Promise.resolve(localStartPasswordReset(email));
 }
 
 // ---------------------------------------------------------------------------
@@ -829,7 +1043,7 @@ const authApi = {
   },
 
   signInWithPassword: async ({ email, password }: { email: string; password: string }) => {
-    const user = state.users.find((u) => (u.email || '').toLowerCase() === email.toLowerCase().trim());
+    const user = findUserByEmail(email);
     if (!user || user.password !== password) {
       return {
         data: { user: null, session: null },
@@ -840,6 +1054,20 @@ const authApi = {
     queueMicrotask(() => emitAuthChange('SIGNED_IN', session));
     return { data: { user: publicUser(user), session }, error: null };
   },
+
+  /** Self-service registration (demo mode only — see localSignUp). */
+  signUp: async ({
+    email,
+    password,
+    options,
+  }: {
+    email: string;
+    password: string;
+    options?: { data?: Record<string, any> };
+  }) => localSignUp({ email, password, data: options?.data }),
+
+  /** Password / metadata change for the signed-in user. */
+  updateUser: async (attrs: { password?: string; data?: Record<string, any> }) => localUpdateUser(attrs),
 
   signInAnonymously: async () => {
     const user: DemoAuthUser = {
@@ -990,6 +1218,10 @@ export const demoBackend = {
   deleteHotelUser: localDeleteHotelUser,
   postGuestOrderCharge: localPostGuestOrderCharge,
   resetPassword: localResetPassword,
+  /** @see localStartPasswordReset */
+  startPasswordReset: localStartPasswordReset,
+  /** @see localCompletePasswordReset */
+  completePasswordReset: localCompletePasswordReset,
 };
 
 // Re-export seed constants the UI uses to show demo credentials.
