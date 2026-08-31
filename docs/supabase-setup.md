@@ -75,13 +75,16 @@ npm install -g supabase
 supabase login
 supabase link --project-ref <your-project-ref>
 supabase db push          # applies migrations
-psql ... < supabase/seed.sql   # OPTIONAL: demo hotel/rooms/menu (local/fresh)
 ```
 
 `0001_init.sql` creates every table, enables RLS, installs the staff/guest
 helper functions and policies, creates the `create_booking` (double-booking
 safe) and `post_guest_order_charge` (guest folio) RPCs, enables Realtime on the
 tables the app streams, and creates the public `hotel-media` storage bucket.
+There is **no demo/seed data** shipped — a database starts empty and every hotel
+property is provisioned from the Super Admin console. (`0003_remove_demo_hotel.sql`
+purges the old "Grand Plaza Demo" tenant from databases that were previously
+seeded with it.)
 
 ### Local development (optional)
 
@@ -89,7 +92,7 @@ With Docker installed:
 
 ```bash
 supabase start
-supabase db reset        # applies migrations + supabase/seed.sql
+supabase db reset        # applies migrations (no demo data)
 ```
 
 Use the local URL/keys it prints in your `.env`.

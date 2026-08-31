@@ -17,6 +17,7 @@ import {
   deleteRow,
   fetchRow,
   rowToObject,
+  objectToRow,
   type UnsubscribeShim,
 } from './db';
 import type {
@@ -107,18 +108,24 @@ export const firestoreService = {
     // Caller provides a pre-generated id (UUID — hotels.id is a uuid column);
     // insert with that id by passing it explicitly. adminCredentials is a UI
     // convenience and has no hotels table column (login_email holds the email).
+    // IMPORTANT: the payload must be mapped camelCase → snake_case like every
+    // other write. Sending `currencySymbol`, `loginEmail`, `hotelCode`, etc.
+    // verbatim makes PostgREST fail with
+    //   Could not find the 'currencySymbol' column of 'hotels' in the schema cache.
     const { adminCredentials: _adminCredentials, ...row } = data as Record<string, any>;
     const { error } = await supabase
       .from('hotels')
-      .insert({ id: hotelId, ...row, created_at: new Date().toISOString() });
+      .insert({ id: hotelId, ...objectToRow(row), created_at: new Date().toISOString() });
     if (error) throw new Error(error.message);
     return hotelId;
   },
 
   updateHotelDoc: async (hotelId: string, data: Partial<Hotel>): Promise<void> => {
+    // Same camelCase → snake_case mapping as createHotelDoc (branding/modules
+    // stay plain objects — they are jsonb columns).
     const { error } = await supabase
       .from('hotels')
-      .update({ ...(data as object), updated_at: new Date().toISOString() })
+      .update({ ...objectToRow(data as Record<string, any>), updated_at: new Date().toISOString() })
       .eq('id', hotelId);
     if (error) throw new Error(error.message);
   },
