@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth, MIN_PASSWORD_LENGTH } from '../../context/AuthContext';
+import { isLocalMode } from '../../services/local/localApi';
 import {
   Lock,
   Mail,
+  User,
   Eye,
   EyeOff,
   ArrowRight,
@@ -10,6 +12,7 @@ import {
   AlertCircle,
   CheckCircle2,
   KeyRound,
+  Download,
 } from 'lucide-react';
 
 type Mode = 'signin' | 'forgot' | 'reset';
@@ -47,6 +50,8 @@ export const LoginPage: React.FC = () => {
     clearAuthError,
     recoveryParams,
   } = useAuth();
+
+  const local = isLocalMode();
 
   const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
@@ -150,7 +155,9 @@ export const LoginPage: React.FC = () => {
   const shownError = errorMessage || (mode === 'signin' ? authError : null);
 
   const headings: Record<Mode, { title: string; subtitle: string }> = {
-    signin: { title: 'Welcome back', subtitle: 'Sign in with your admin account.' },
+    signin: local
+      ? { title: 'Welcome back', subtitle: 'Sign in with the username & password your seller gave you.' }
+      : { title: 'Welcome back', subtitle: 'Sign in with your admin account.' },
     forgot: {
       title: 'Reset your password',
       subtitle: 'We will email you a link to set a new password.',
@@ -250,19 +257,19 @@ export const LoginPage: React.FC = () => {
               {mode === 'signin' && (
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div>
-                    <label className="block t-button-cap text-ink mb-1.5">Email</label>
+                    <label className="block t-button-cap text-ink mb-1.5">{local ? 'Username' : 'Email'}</label>
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-faint">
-                        <Mail className="w-4 h-4" />
+                        {local ? <User className="w-4 h-4" /> : <Mail className="w-4 h-4" />}
                       </div>
                       <input
                         ref={emailRef}
-                        type="email"
+                        type={local ? 'text' : 'email'}
                         required
-                        autoComplete="email"
+                        autoComplete={local ? 'username' : 'email'}
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder="you@example.com"
+                        placeholder={local ? 'your hotel account' : 'you@example.com'}
                         className="input-super pl-9 pr-3 py-2.5"
                       />
                     </div>
@@ -271,13 +278,15 @@ export const LoginPage: React.FC = () => {
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="block t-button-cap text-ink">Password</label>
-                      <button
-                        type="button"
-                        onClick={() => switchMode('forgot')}
-                        className="t-caption text-primary hover:underline"
-                      >
-                        Forgot password?
-                      </button>
+                      {!local && (
+                        <button
+                          type="button"
+                          onClick={() => switchMode('forgot')}
+                          className="t-caption text-primary hover:underline"
+                        >
+                          Forgot password?
+                        </button>
+                      )}
                     </div>
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-faint">
@@ -318,7 +327,14 @@ export const LoginPage: React.FC = () => {
                   </button>
 
                   <p className="t-caption text-ink-faint text-center">
-                    Accounts are provisioned by the platform owner.
+                    {local ? (
+                      <>Running offline on this computer — your data never leaves it. Lost your password? Ask your seller.</>
+                    ) : (
+                      <>
+                        Accounts are provisioned by the platform owner. Want to run NEXORA on your own
+                        computer? <a href="/download" className="text-primary hover:underline">Get the Desktop Edition</a>.
+                      </>
+                    )}
                   </p>
                 </form>
               )}

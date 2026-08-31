@@ -10,3 +10,11 @@ coverage/
 # Supabase
 supabase/.branches
 supabase/.temp
+
+# --- Desktop edition / local runtime --------------------------------
+keys/
+*.nexora
+.nexora-data/
+desktop/release/
+public/downloads/*.exe
+public/downloads/*.dmg

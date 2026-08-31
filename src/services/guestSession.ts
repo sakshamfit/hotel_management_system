@@ -1,4 +1,5 @@
 import { supabase } from '../supabase/config';
+import { isLocalMode, localGuestSession } from './local/localApi';
 import type { GuestClaims } from '../types';
 
 /**
@@ -71,6 +72,26 @@ async function exchangeRoomToken(roomToken: string, uid: string, accessToken: st
  * the portal keep their own session and are authorized as usual.
  */
 export async function ensureGuestSession(roomToken: string): Promise<GuestSessionInfo> {
+  // Desktop edition: the QR code resolves against the local server on the hotel
+  // network — no Supabase, no anonymous auth.
+  if (isLocalMode()) {
+    const cacheKeyLocal = `local::${roomToken}`;
+    const cachedLocal = sessionCache.get(cacheKeyLocal);
+    if (cachedLocal) return cachedLocal;
+
+    const res = await localGuestSession(roomToken);
+    const session: GuestSessionInfo = {
+      role: 'guest',
+      hotelId: res.hotelId,
+      roomId: res.roomId,
+      roomNumber: res.roomNumber,
+      guestName: res.guestName || '',
+      uid: res.uid,
+    };
+    sessionCache.set(cacheKeyLocal, session);
+    return session;
+  }
+
   let uid: string;
   let accessToken: string;
 

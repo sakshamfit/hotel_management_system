@@ -3,15 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Header } from './components/common/Header';
 import { SuperAdminDashboard } from './components/super-admin/SuperAdminDashboard';
 import { HotelAdminLayout } from './components/hotel-admin/HotelAdminLayout';
 import { GuestRoomView } from './components/guest/GuestRoomView';
 import { LoginPage } from './components/auth/LoginPage';
+import { LocalSetupWizard } from './components/setup/LocalSetupWizard';
+import { DownloadPage } from './pages/DownloadPage';
+import { isLocalMode, fetchSetupStatus, type LocalSetupStatus } from './services/local/localApi';
 import { isSupabaseConfigured } from './supabase/config';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Loader2 } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
   const { activeExperience, setActiveExperience, setGuestRoomToken, isLoading } = useAuth();
@@ -66,6 +69,14 @@ const MainAppContent: React.FC = () => {
 };
 
 export default function App() {
+  // Public product page: "Download the Desktop Edition" (works in both editions).
+  if (window.location.pathname.startsWith('/download')) {
+    return <DownloadPage />;
+  }
+
+  // Desktop edition — first run shows the activation wizard, then the app.
+  if (isLocalMode()) return <LocalEditionGate />;
+
   // Without Supabase credentials there is no backend at all — show what to set
   // instead of a login form that can only fail (see docs/supabase-setup.md).
   if (!isSupabaseConfigured) return <SetupScreen />;
@@ -76,6 +87,58 @@ export default function App() {
     </AuthProvider>
   );
 }
+
+/** Local (desktop) edition: activation wizard until the machine is licensed. */
+const LocalEditionGate: React.FC = () => {
+  const [status, setStatus] = useState<LocalSetupStatus | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    fetchSetupStatus()
+      .then((s) => mounted && setStatus(s))
+      .catch(() => mounted && setFailed(true));
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  if (failed) {
+    return (
+      <div className="min-h-screen bg-canvas text-ink flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-4">
+          <AlertCircle className="w-8 h-8 text-danger mx-auto" />
+          <h1 className="t-display-md">The local service did not respond</h1>
+          <p className="t-caption text-ink-mute">
+            NEXORA Desktop Edition expects its offline service on this machine. Restart the app, or reinstall if the problem
+            continues. Your data is safe in the app's data folder.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!status) {
+    return (
+      <div className="min-h-screen bg-canvas flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
+          <p className="t-caption text-ink-mute">Starting NEXORA…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!status.activated) {
+    return <LocalSetupWizard onActivated={() => setStatus({ ...status, activated: true })} />;
+  }
+
+  return (
+    <AuthProvider>
+      <MainAppContent />
+    </AuthProvider>
+  );
+};
 
 /** Rendered when VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are missing. */
 const SetupScreen: React.FC = () => (
@@ -131,7 +194,8 @@ const SetupScreen: React.FC = () => (
 
       <p className="t-caption text-ink-faint">
         Full walkthrough, including Auth provider settings and the redirect URLs password reset
-        needs: <code>docs/supabase-setup.md</code>.
+        needs: <code>docs/supabase-setup.md</code>. Looking for the offline version? It ships as the{' '}
+        <a className="text-primary underline" href="/download">Desktop Edition</a>.
       </p>
     </div>
   </div>

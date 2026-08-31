@@ -1,4 +1,5 @@
 import { supabase, supabaseProjectUrl } from '../supabase/config';
+import { isLocalMode, localUploadMedia, localDeleteMediaByUrl, localDeleteMediaFolder, isLocalMediaUrl } from './local/localApi';
 
 /**
  * Image uploads — Supabase Storage, bucket `hotel-media`.
@@ -53,6 +54,13 @@ export interface UploadOptions {
 export async function uploadImage({ file, path, onProgress }: UploadOptions): Promise<string> {
   const validationError = validateImageFile(file);
   if (validationError) throw new Error(validationError);
+
+  // Desktop edition: the image is stored next to the local database.
+  if (isLocalMode()) {
+    const url = await localUploadMedia(file, path);
+    onProgress?.(100);
+    return url;
+  }
 
   const {
     data: { session },
@@ -118,6 +126,15 @@ function objectPathFromUrl(url: string): string | null {
 
 /** Deletes a Storage object given its URL. Best effort — never throws. */
 export async function deleteImageByUrl(url?: string | null): Promise<void> {
+  if (isLocalMode()) {
+    if (!url || !isLocalMediaUrl(url)) return;
+    try {
+      await localDeleteMediaByUrl(url);
+    } catch (err: any) {
+      console.warn('Storage cleanup skipped:', err?.message || err);
+    }
+    return;
+  }
   if (!url || !isSupabaseStorageUrl(url)) return;
   const path = objectPathFromUrl(url);
   if (!path) return;
@@ -130,6 +147,14 @@ export async function deleteImageByUrl(url?: string | null): Promise<void> {
 
 /** Recursively deletes every object under a prefix (used on hotel deletion). */
 export async function deleteFolder(pathPrefix: string): Promise<void> {
+  if (isLocalMode()) {
+    try {
+      await localDeleteMediaFolder(pathPrefix.replace(/^\/+|\/+$/g, ''));
+    } catch (err: any) {
+      console.warn('Storage folder cleanup skipped:', err?.message || err);
+    }
+    return;
+  }
   const prefix = pathPrefix.replace(/^\/+|\/+$/g, '');
   try {
     const { data: list, error } = await supabase.storage.from(BUCKET).list(prefix, { limit: 1000 });
