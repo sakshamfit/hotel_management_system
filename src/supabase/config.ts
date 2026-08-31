@@ -1,22 +1,23 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { localSupabase, demoBackend as localDemoBackend } from './localBackend';
 
 /**
  * Supabase client configuration.
  *
- * Two modes:
+ * The app runs on a real Supabase project — Postgres + RLS + Realtime + Auth +
+ * Storage. `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are bundled into
+ * the browser client (safe: RLS protects the data); the service-role key stays
+ * server-side in server.ts.
  *
- *   1. REAL — `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` are set to actual
- *      project values. We build the normal browser client; RLS (applied by
- *      supabase/migrations/0001_init.sql) protects the anon key.
- *   2. DEMO  — credentials are missing or still placeholders (.env.example
- *      values). The app switches to a fully local in-memory backend
- *      (src/supabase/localBackend.ts) seeded with a demo hotel, staff
- *      accounts and a live stay, so everything works with zero setup.
- *
- * The service-role key NEVER appears here — it lives server-side only
- * (server.ts / scripts).
+ * When the credentials are missing or still hold the `.env.example`
+ * placeholders, `isSupabaseConfigured` is false and App.tsx renders the setup
+ * screen instead of a half-working console. `supabase` below is then a stub
+ * whose every method throws a message naming the variables to set, so a stray
+ * call fails loudly instead of silently returning empty data.
  */
+
+const NOT_CONFIGURED_MESSAGE =
+  'Supabase is not configured. Copy .env.example to .env and set VITE_SUPABASE_URL and ' +
+  'VITE_SUPABASE_ANON_KEY (plus SUPABASE_SERVICE_ROLE_KEY for the server) — see docs/supabase-setup.md.';
 
 function isPlaceholder(value: string | undefined): boolean {
   if (!value) return true;
@@ -30,34 +31,43 @@ const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.t
 const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() || '';
 
 /** True when real, usable Supabase credentials are configured. */
-export const realSupabaseConfigured = !isPlaceholder(supabaseUrl) && !isPlaceholder(supabaseAnonKey);
+export const isSupabaseConfigured = !isPlaceholder(supabaseUrl) && !isPlaceholder(supabaseAnonKey);
 
-/** True when the app runs against the local demo backend. */
-export const isDemoMode = !realSupabaseConfigured;
+/** The project URL, for callers that build absolute Storage/API URLs. */
+export const supabaseProjectUrl = supabaseUrl.replace(/\/$/, '');
 
-/**
- * Kept for App.tsx compatibility: true in both modes, since demo mode is a
- * fully working backend (no setup screen needed).
- */
-export const isSupabaseConfigured = true;
+function notConfigured(): never {
+  throw new Error(NOT_CONFIGURED_MESSAGE);
+}
 
-/** Demo-mode helpers (guest session exchange, admin user creation, ...). */
-export const demoBackend = isDemoMode ? localDemoBackend : null;
+/** Namespace whose every member throws (`supabase.auth.getSession()` etc.). */
+const throwingNamespace = new Proxy({} as Record<string, unknown>, {
+  get: () => notConfigured,
+});
+
+/** Stands in for the client so imports stay valid before credentials exist. */
+const unconfiguredStub = {
+  auth: throwingNamespace,
+  storage: throwingNamespace,
+  from: notConfigured,
+  rpc: notConfigured,
+  channel: notConfigured,
+  removeChannel: notConfigured,
+};
 
 /** The client the rest of the app imports. */
 export const supabase: SupabaseClient = (
-  isDemoMode ? localSupabase : createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: false, // we use the SPA's own token routing for QR guests
-    },
-  })
+  isSupabaseConfigured
+    ? createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: false, // the SPA exchanges recovery/OAuth links itself
+        },
+      })
+    : unconfiguredStub
 ) as unknown as SupabaseClient;
 
-if (isDemoMode && typeof console !== 'undefined') {
-  console.info(
-    '[supabase] Demo mode active — using the local in-memory backend. ' +
-      'Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (plus SUPABASE_SERVICE_ROLE_KEY in .env) to use a real Supabase project.'
-  );
+if (!isSupabaseConfigured && typeof console !== 'undefined') {
+  console.warn(`[supabase] ${NOT_CONFIGURED_MESSAGE}`);
 }

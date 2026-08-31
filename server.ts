@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
-import fs from 'fs';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -25,17 +24,16 @@ function isPlaceholderValue(value: string | undefined): boolean {
 }
 
 /**
- * Demo mode: Supabase credentials are absent/placeholders. The browser client
- * runs against the local demo backend (src/supabase/localBackend.ts), so the
- * Express server only needs to serve demo-mode storage uploads here; the
- * admin/guest API routes stay 503 (the client never calls them in demo mode).
+ * Credentials absent or still placeholders: the API routes below answer 503
+ * (see requireSupabaseConfigured) and the browser shows the setup screen, so
+ * nothing half-works while `.env` is being filled in.
  */
-const DEMO_MODE = isPlaceholderValue(SUPABASE_URL) || isPlaceholderValue(SUPABASE_SERVICE_KEY);
+const CONFIGURED = !isPlaceholderValue(SUPABASE_URL) && !isPlaceholderValue(SUPABASE_SERVICE_KEY);
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+if (!CONFIGURED) {
   console.warn(
-    '[server] SUPABASE url/service-role key missing. Set VITE_SUPABASE_URL and ' +
-      'SUPABASE_SERVICE_ROLE_KEY in .env (see .env.example). Guest/admin API routes will 503.'
+    '[server] SUPABASE url/service-role key missing or still placeholders. Set VITE_SUPABASE_URL ' +
+      'and SUPABASE_SERVICE_ROLE_KEY in .env (see .env.example). Guest/admin API routes will 503.'
   );
 }
 
@@ -181,72 +179,18 @@ function requireSupabaseConfigured(res: Response): SupabaseClient | null {
   return admin;
 }
 
-// ---------------------------------------------------------------------------
-// Demo-mode storage (used by storageService.ts uploads when Supabase is absent)
-// ---------------------------------------------------------------------------
-
-const DEMO_UPLOAD_DIR = path.join(process.cwd(), '.demo-uploads');
-
-/** Decode + sanitize a demo storage path (no traversal, no absolute paths). */
-function safeDemoRel(raw: string | undefined): string | null {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(raw || '');
-  } catch {
-    return null;
-  }
-  const rel = decoded.replace(/^\/+/, '');
-  if (!rel || rel.length > 512) return null;
-  if (rel.split(/[/\\]/).includes('..')) return null;
-  return rel;
-}
-
-function mountDemoStorage(app: express.Express) {
-  fs.mkdirSync(DEMO_UPLOAD_DIR, { recursive: true });
-
-  app.post('/demo-storage/upload/*', express.raw({ type: () => true, limit: '12mb' }), (req, res) => {
-    const rel = safeDemoRel(req.params[0]);
-    if (!rel) return res.status(400).json({ error: 'Invalid storage path' });
-    const target = path.join(DEMO_UPLOAD_DIR, rel);
-    try {
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, req.body as Buffer);
-      return res.status(200).json({ Key: rel });
-    } catch (err: any) {
-      console.error('[demo-storage] write failed:', err);
-      return res.status(500).json({ error: 'Upload failed' });
-    }
-  });
-
-  app.get('/demo-storage/*', (req, res) => {
-    const rel = safeDemoRel(req.params[0]);
-    if (!rel) return res.status(400).json({ error: 'Invalid storage path' });
-    return res.sendFile(path.join(DEMO_UPLOAD_DIR, rel), (err) => {
-      if (err && !res.headersSent) res.status(404).json({ error: 'Not found' });
-    });
-  });
-
-  app.delete('/demo-storage/*', (req, res) => {
-    const rel = safeDemoRel(req.params[0]);
-    if (!rel) return res.status(400).json({ error: 'Invalid storage path' });
-    try {
-      fs.rmSync(path.join(DEMO_UPLOAD_DIR, rel), { force: true });
-      return res.status(200).json({ ok: true });
-    } catch {
-      return res.status(500).json({ error: 'Delete failed' });
-    }
-  });
-}
-
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
   app.use(express.json({ limit: '64kb' }));
 
-  if (DEMO_MODE) mountDemoStorage(app);
-
   app.get('/api/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString(), backend: DEMO_MODE ? 'demo' : 'supabase' });
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      backend: 'supabase',
+      configured: CONFIGURED,
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -514,7 +458,7 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(
-      `NEXORA HOTEL OS server running at http://0.0.0.0:${PORT} (${DEMO_MODE ? 'demo backend — no Supabase credentials' : 'Supabase backend'})`
+      `NEXORA HOTEL OS server running at http://0.0.0.0:${PORT} (${CONFIGURED ? 'Supabase backend' : 'NOT CONFIGURED — set .env'})`
     );
   });
 }

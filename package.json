@@ -13,8 +13,7 @@
     "db:reset": "supabase db reset",
     "db:push": "supabase db push",
     "lint": "tsc --noEmit",
-    "check:dates": "tsx scripts/check-dates.ts",
-    "check:demo": "tsx scripts/check-demo-backend.ts"
+    "check:dates": "tsx scripts/check-dates.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

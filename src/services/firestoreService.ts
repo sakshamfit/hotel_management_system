@@ -8,7 +8,7 @@
  *
  * Tables (snake_case) map to camelCase app objects in src/services/db.ts.
  */
-import { supabase, demoBackend } from '../supabase/config';
+import { supabase } from '../supabase/config';
 import {
   subscribeTable,
   subscribeRow,
@@ -586,12 +586,6 @@ export const firestoreService = {
     } = await supabase.auth.getSession();
     if (!session?.access_token) return { linked: false, reason: 'no-session' };
 
-    // Demo mode: post the folio charge locally (mirrors post_guest_order_charge RPC).
-    if (demoBackend) {
-      const result = await demoBackend.postGuestOrderCharge(orderId);
-      return { linked: !!result.linked, reason: result.reason };
-    }
-
     try {
       const response = await fetch(`/api/guest/orders/${encodeURIComponent(orderId)}/charge`, {
         method: 'POST',
@@ -623,11 +617,6 @@ export const firestoreService = {
       throw new Error('Not authenticated. Please sign in as Super Admin.');
     }
 
-    // Demo mode: create the auth user + profile locally (service-role stand-in).
-    if (demoBackend) {
-      return demoBackend.createHotelUser({ hotelId, hotelName, email, password, name, phone });
-    }
-
     const response = await fetch('/api/admin/create-hotel-user', {
       method: 'POST',
       headers: {
@@ -642,10 +631,6 @@ export const firestoreService = {
   },
 
   deleteHotelUserAuth: async (email: string) => {
-    if (demoBackend) {
-      await demoBackend.deleteHotelUser(email);
-      return;
-    }
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -662,10 +647,6 @@ export const firestoreService = {
 
   /** Emails a password reset link (Supabase Auth; the raw password is never stored). */
   sendHotelPasswordReset: async (email: string) => {
-    if (demoBackend) {
-      // No mail provider in demo mode — passwords are managed by the admin UI.
-      return;
-    }
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${window.location.origin}/`,
     });

@@ -4,25 +4,37 @@ This app runs entirely on **Supabase**: Postgres + Row Level Security (data),
 Realtime (live updates), Supabase Auth (staff email/password + anonymous QR
 guests), and Supabase Storage (images). There is no Firebase dependency left.
 
-## 0. No credentials? Demo mode (zero setup)
+## 0. Before you start
 
-If `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are missing or still
-contain the `.env.example` placeholders, the app automatically runs on a
-**local demo backend** (`src/supabase/localBackend.ts`) — an in-memory store
-persisted to localStorage that implements the same query/auth/realtime surface
-the app uses, so every screen works with zero setup:
+There is no offline or demo backend — the app talks to Supabase for everything
+(data, auth, realtime, storage). Until `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_ANON_KEY` are set to real values, the browser shows a
+**"Connect your Supabase project"** setup screen and every `/api/*` route
+answers `503`. `GET /api/health` reports `"configured": false` in that state.
 
-- **Super Admin** — `admin@nexora.test` / `nexora123`
-- **Hotel Admin** — `admin@grandplaza.demo` / `nexora123`
-- **Guest portal** — open `/?token=tok-demo-101` (Room 101 is checked in, with
-  a folio, menu and live requests)
-- Image uploads are stored under `.demo-uploads/` and served by the dev server.
+```bash
+cp .env.example .env    # then fill in the three values
+npm run dev             # http://localhost:3000
+```
 
-Demo mode is visible as a **Demo** badge in the header and a demo panel on the
-login screen. It is never active once real credentials are configured below —
-the demo users and seeded data only exist inside the local store.
+### Accounts and password recovery
 
-## 1. Create the project (only for going live)
+- **Sign-in** is email + password against Supabase Auth. An address only works
+  once it has a `profiles` row (`super_admin`, or `hotel_admin` with a
+  `hotel_id`) — see §4. Signing in without one now reports
+  *"no NEXORA role is provisioned for it yet"* on the login form instead of
+  silently returning you to it.
+- **Forgot password?** on the login screen emails a Supabase recovery link.
+  `config.ts` sets `detectSessionInUrl: false`, so the app exchanges the link
+  itself (both the implicit `#access_token=…&type=recovery` and PKCE
+  `?code=…&type=recovery` shapes) and then shows the "choose a new password"
+  panel. For this to land, your origin must be in
+  **Auth → URL Configuration → Redirect URLs**.
+- **Resending for a hotel admin**: the Super Admin console has a per-hotel
+  reset action (`sendHotelPasswordReset`). Passwords are never stored or
+  readable by the app.
+
+## 1. Create the project
 
 1. Create a Supabase project (supabase.com → New project). Note the project
    URL and database password.
@@ -31,6 +43,10 @@ the demo users and seeded data only exist inside the local store.
      done by the super admin, so leave "Allow new users to sign up" off).
    - Enable **Anonymous sign-ins** (required for QR guest sessions).
    - Optionally enable **Google** for staff SSO.
+   - **Authentication → URL Configuration**: add your deployed origin (and
+     `http://localhost:3000` for dev) to **Redirect URLs**. Password-recovery
+     links redirect back to `window.location.origin` and are rejected if the
+     origin is not allow-listed.
 3. **Project Settings → API**: copy the **Project URL**, the **anon public**
    key, and the **service_role** key (server only — never ship it).
 
