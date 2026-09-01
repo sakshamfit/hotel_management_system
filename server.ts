@@ -1,8 +1,11 @@
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
+import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { issueLicense, generateActivationCode, loadPrivateKeyPem } from './server/local/licensing';
+import { LocalStore } from './server/local/store';
 
 // ---------------------------------------------------------------------------
 // Supabase admin (service-role) client.
@@ -70,6 +73,199 @@ async function verifySupabaseJwt(token: string): Promise<{
     role: user.role || 'authenticated',
     isAnonymous: (user as any).is_anonymous === true || !!user.app_metadata?.is_anonymous,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Desktop licence helpers — Seller Console (issue credentials Marg-style).
+// ---------------------------------------------------------------------------
+
+/** AES-256-GCM vault for customer passwords so the seller can re-share them. */
+function encryptSecret(plain: string): string {
+  const key = process.env.LICENSE_PASSWORD_KEY;
+  if (!key || key.length < 32) return '';
+  const keyBuf = crypto.createHash('sha256').update(key).digest();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', keyBuf, iv);
+  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
+}
+
+function decryptSecret(enc: string): string | null {
+  try {
+    const [ivHex, tagHex, dataHex] = String(enc || '').split(':');
+    if (!ivHex || !tagHex || !dataHex) return null;
+    const key = process.env.LICENSE_PASSWORD_KEY;
+    if (!key) return null;
+    const keyBuf = crypto.createHash('sha256').update(key).digest();
+    const decipher = crypto.createDecipheriv('aes-256-gcm', keyBuf, Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    return Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+function licensePublicRow(row: Record<string, any>) {
+  return {
+    id: row.id,
+    code: row.code,
+    hotelName: row.hotel_name,
+    ownerName: row.owner_name,
+    username: row.username,
+    email: row.email,
+    status: row.status,
+    issuedAt: row.issued_at,
+    activatedAt: row.activated_at,
+    expiresAt: row.expires_at,
+    notes: row.notes,
+    createdAt: row.created_at,
+  };
+}
+
+function registerLicensingRoutes(app: express.Express, requireSuperAdmin: (req: Request, res: Response, next: NextFunction) => void) {
+  // List all issued desktop licences (seller console).
+  app.get('/api/licenses', requireSuperAdmin, async (req: Request, res: Response) => {
+    const admin = requireSupabaseConfigured(res);
+    if (!admin) return;
+    try {
+      const { data, error } = await admin
+        .from('desktop_licenses')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      res.json({ data: (data || []).map(licensePublicRow) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to list licences.' });
+    }
+  });
+
+  // Issue a licence → credentials + activation string (the "we provide the
+  // credentials" step). The plaintext password is returned ONCE here.
+  app.post('/api/licenses', requireSuperAdmin, async (req: Request, res: Response) => {
+    const admin = requireSupabaseConfigured(res);
+    if (!admin) return;
+    const { hotelName, ownerName, username, password, email, expiresAt, notes } = req.body || {};
+    if (!hotelName || !username?.trim() || !password) {
+      return res.status(400).json({ error: 'hotelName, username and password are required.' });
+    }
+    if (String(password).length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    }
+    if (!loadPrivateKeyPem()) {
+      return res.status(503).json({
+        error:
+          'No licence signing key configured. Run `npm run keys:generate`, then set LICENSE_SIGNING_PRIVATE_KEY in .env (or keep keys/license-signing-private.pem).',
+      });
+    }
+
+    const passwordHash = LocalStore.hashPassword(String(password));
+    let issued: ReturnType<typeof issueLicense>;
+    try {
+      issued = issueLicense({
+        hotelName: String(hotelName),
+        ownerName: String(ownerName || ''),
+        username: String(username).trim().toLowerCase(),
+        passwordHash,
+        email: String(email || ''),
+        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+        code: generateActivationCode(),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Could not sign the licence.' });
+    }
+
+    const passwordEnc = encryptSecret(String(password));
+    const { error } = await admin.from('desktop_licenses').insert({
+      code: issued.code,
+      hotel_name: issued.payload.hotelName,
+      owner_name: issued.payload.ownerName,
+      username: issued.payload.username,
+      email: issued.payload.email || null,
+      password_hash: passwordHash,
+      password_enc: passwordEnc || null,
+      password_plain: passwordEnc ? null : String(password),
+      activation_json: JSON.stringify({ payload: issued.payload, signature: issued.signature }),
+      activation_string: issued.activationString,
+      status: 'issued',
+      issued_at: new Date().toISOString(),
+      expires_at: issued.payload.expiresAt || null,
+      notes: String(notes || '') || null,
+      created_by: (req as any).claims?.uid || null,
+    });
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.status(201).json({
+      licence: {
+        ...licensePublicRow({
+          id: issued.payload.id,
+          code: issued.code,
+          hotel_name: issued.payload.hotelName,
+          owner_name: issued.payload.ownerName,
+          username: issued.payload.username,
+          email: issued.payload.email,
+          status: 'issued',
+          issued_at: new Date().toISOString(),
+          expires_at: issued.payload.expiresAt,
+          notes,
+        }),
+        activationString: issued.activationString,
+      },
+      // Given ONCE so the seller can share it with the customer.
+      credentials: { username: issued.payload.username, password: String(password) },
+    });
+  });
+
+  // Download the .nexora activation file.
+  app.get('/api/licenses/:id/download', requireSuperAdmin, async (req: Request, res: Response) => {
+    const admin = requireSupabaseConfigured(res);
+    if (!admin) return;
+    const { data, error } = await admin.from('desktop_licenses').select('activation_json, code, hotel_name').eq('id', String(req.params.id)).maybeSingle();
+    if (error || !data) return res.status(404).json({ error: 'Licence not found.' });
+    const hotelSlug = String(data.hotel_name || 'hotel').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="nexora-${hotelSlug}-${String(data.code).replace(/^NX-/, '')}.nexora"`);
+    res.send(data.activation_json || '{}');
+  });
+
+  // Re-share credentials (seller support).
+  app.get('/api/licenses/:id/credentials', requireSuperAdmin, async (req: Request, res: Response) => {
+    const admin = requireSupabaseConfigured(res);
+    if (!admin) return;
+    const { data, error } = await admin.from('desktop_licenses').select('username,password_enc,password_plain').eq('id', String(req.params.id)).maybeSingle();
+    if (error || !data) return res.status(404).json({ error: 'Licence not found.' });
+    const password = data.password_enc ? decryptSecret(data.password_enc) : data.password_plain;
+    if (!password) {
+      return res.status(500).json({
+        error: 'The password cannot be recovered for this licence. Set LICENSE_PASSWORD_KEY in .env and issue a new licence.',
+      });
+    }
+    res.json({ username: data.username, password });
+  });
+
+  // Status updates (mark activated/revoke/expired) + delete.
+  app.post('/api/licenses/:id/status', requireSuperAdmin, async (req: Request, res: Response) => {
+    const admin = requireSupabaseConfigured(res);
+    if (!admin) return;
+    const status = String(req.body?.status || '');
+    if (!['issued', 'activated', 'expired', 'revoked'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status.' });
+    }
+    const patch: Record<string, any> = { status };
+    if (status === 'activated') patch.activated_at = new Date().toISOString();
+    const { error } = await admin.from('desktop_licenses').update(patch).eq('id', String(req.params.id));
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  });
+
+  app.delete('/api/licenses/:id', requireSuperAdmin, async (req: Request, res: Response) => {
+    const admin = requireSupabaseConfigured(res);
+    if (!admin) return;
+    const { error } = await admin.from('desktop_licenses').delete().eq('id', String(req.params.id));
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -181,17 +377,45 @@ function requireSupabaseConfigured(res: Response): SupabaseClient | null {
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = Number(process.env.PORT) || (process.env.NEXORA_RUNTIME === 'local' ? 3967 : 3000);
+  const LOCAL_MODE = process.env.NEXORA_RUNTIME === 'local';
   app.use(express.json({ limit: '64kb' }));
+
+  // ---------------------------------------------------------------------
+  // Desktop Edition: mount the OFFLINE backend (SQLite + licensing) and
+  // skip every Supabase route. The hotel data lives in NEXORA_DATA_DIR.
+  // ---------------------------------------------------------------------
+  let localStore: import('./server/local/store').LocalStore | null = null;
+  if (LOCAL_MODE) {
+    const { createLocalApp } = await import('./server/local/index');
+    const dataDir = process.env.NEXORA_DATA_DIR || path.join(process.cwd(), '.nexora-data');
+    const { app: localLayer, store } = createLocalApp({
+      dataDir,
+      version: process.env.npm_package_version || '1.0.0',
+      demoAvailable: process.env.NODE_ENV !== 'production',
+    });
+    localStore = store;
+    app.use(localLayer);
+    console.log(`[local] Offline backend ready → ${dataDir}`);
+  }
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
-      backend: 'supabase',
-      configured: CONFIGURED,
+      backend: LOCAL_MODE ? 'local' : 'supabase',
+      configured: LOCAL_MODE ? true : CONFIGURED,
     });
   });
+
+  if (LOCAL_MODE) {
+    // Everything below is Supabase-only (hosted edition).
+    const vite = await setupFrontend(app);
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`NEXORA HOTEL OS (Desktop Edition, offline) running at http://0.0.0.0:${PORT} — data: ${localStore?.dbPath}`);
+    });
+    return;
+  }
 
   // -----------------------------------------------------------------------
   // Guest session — exchange a room QR token for a room-scoped session row.
@@ -441,26 +665,33 @@ async function startServer() {
     }
   );
 
-  // Vite integration
+  // Seller Console — issue/download desktop licences (hosted edition only).
+  registerLicensingRoutes(app, requireSuperAdmin);
+
+  const vite = await setupFrontend(app);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(
+      `NEXORA HOTEL OS server running at http://0.0.0.0:${PORT} (${CONFIGURED ? 'Supabase backend + licence console' : 'NOT CONFIGURED — set .env'})`
+    );
+  });
+}
+
+/** Vite dev middleware or static dist + SPA fallback (shared by both editions). */
+async function setupFrontend(app: express.Express) {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true, allowedHosts: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    return vite;
   }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(
-      `NEXORA HOTEL OS server running at http://0.0.0.0:${PORT} (${CONFIGURED ? 'Supabase backend' : 'NOT CONFIGURED — set .env'})`
-    );
+  const distPath = path.join(process.cwd(), 'dist');
+  app.use(express.static(distPath));
+  app.get('*', (_req: Request, res: Response) => {
+    res.sendFile(path.join(distPath, 'index.html'));
   });
+  return null;
 }
 
 startServer();

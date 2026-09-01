@@ -4,6 +4,7 @@ import { firestoreService } from '../../services/firestoreService';
 import { deleteFolder } from '../../services/storageService';
 import { Hotel } from '../../types';
 import { CreateHotelWizardModal } from './CreateHotelWizardModal';
+import { LicensesTab } from './LicensesTab';
 import { NewOrderAlertCenter } from '../common/NewOrderAlertCenter';
 import {
   Building2,
@@ -34,6 +35,7 @@ export const SuperAdminDashboard: React.FC = () => {
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [resettingId, setResettingId] = useState<string | null>(null);
+  const [view, setView] = useState<'tenants' | 'licenses'>('tenants');
 
   const filteredHotels = allHotels.filter((h) => {
     const matchesSearch =
@@ -153,14 +155,36 @@ export const SuperAdminDashboard: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIsWizardOpen(true)}
-              className="flex items-center gap-2 px-5 py-3 bg-[#0066cc] hover:bg-[#004fa3] text-white rounded-lg text-xs sm:text-sm font-semibold shadow-sm transition-all transform active:scale-95"
-            >
-              <Plus className="w-4 h-4" /> Provision New Hotel
-            </button>
+            <div className="flex items-center rounded-lg border border-hairline bg-canvas p-1">
+              <button
+                onClick={() => setView('tenants')}
+                className={`px-3.5 py-2 rounded-md text-xs font-semibold transition-colors ${view === 'tenants' ? 'bg-ink text-white' : 'text-ink-mute hover:text-ink'}`}
+              >
+                Hotel Tenants
+              </button>
+              <button
+                onClick={() => setView('licenses')}
+                className={`px-3.5 py-2 rounded-md text-xs font-semibold transition-colors ${view === 'licenses' ? 'bg-ink text-white' : 'text-ink-mute hover:text-ink'}`}
+              >
+                Desktop Licences
+              </button>
+            </div>
+            {view === 'tenants' && (
+              <button
+                onClick={() => setIsWizardOpen(true)}
+                className="flex items-center gap-2 px-5 py-3 bg-[#0066cc] hover:bg-[#004fa3] text-white rounded-lg text-xs sm:text-sm font-semibold shadow-sm transition-all transform active:scale-95"
+              >
+                <Plus className="w-4 h-4" /> Provision New Hotel
+              </button>
+            )}
           </div>
         </div>
+
+        {view === 'licenses' && (
+          <div className="bg-canvas rounded-xl border border-hairline p-6">
+            <LicensesTab />
+          </div>
+        )}
 
         {/* Metrics Grid */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

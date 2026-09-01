@@ -15,10 +15,16 @@ import {
   insertRow,
   updateRow,
   deleteRow,
+  fetchRows,
   fetchRow,
+  updateWhere,
+  deleteWhere,
+  rpc,
+  getCurrentUserId,
   rowToObject,
   type UnsubscribeShim,
 } from './db';
+import { isLocalMode } from './local/localApi';
 import type {
   Hotel,
   Room,
@@ -108,24 +114,17 @@ export const firestoreService = {
     // insert with that id by passing it explicitly. adminCredentials is a UI
     // convenience and has no hotels table column (login_email holds the email).
     const { adminCredentials: _adminCredentials, ...row } = data as Record<string, any>;
-    const { error } = await supabase
-      .from('hotels')
-      .insert({ id: hotelId, ...row, created_at: new Date().toISOString() });
-    if (error) throw new Error(error.message);
+    await insertRow('hotels', { id: hotelId, ...row, createdAt: new Date().toISOString() });
     return hotelId;
   },
 
   updateHotelDoc: async (hotelId: string, data: Partial<Hotel>): Promise<void> => {
-    const { error } = await supabase
-      .from('hotels')
-      .update({ ...(data as object), updated_at: new Date().toISOString() })
-      .eq('id', hotelId);
-    if (error) throw new Error(error.message);
+    await updateRow('hotels', hotelId, { ...(data as object), updatedAt: new Date().toISOString() });
   },
 
   deleteHotelDoc: async (hotelId: string): Promise<void> => {
     // ON DELETE CASCADE removes every tenant row. Just delete the hotel.
-    await supabase.from('hotels').delete().eq('id', hotelId);
+    await deleteRow('hotels', hotelId);
   },
 
   // ==========================================
@@ -306,13 +305,12 @@ export const firestoreService = {
     comment?: string
   ): Promise<{ ok: boolean; reason?: string }> => {
     try {
-      const { data, error } = await supabase.rpc('submit_guest_order_feedback', {
+      const data = (await rpc('submit_guest_order_feedback', {
         p_order_id: orderId,
         p_rating: rating,
         p_comment: comment || '',
-      });
-      if (error) return { ok: false, reason: error.message };
-      return (data as { ok: boolean; reason?: string }) || { ok: false, reason: 'no-response' };
+      })) as { ok: boolean; reason?: string };
+      return data || { ok: false, reason: 'no-response' };
     } catch (err: any) {
       return { ok: false, reason: err?.message || 'network-error' };
     }
@@ -389,26 +387,25 @@ export const firestoreService = {
     const stay = isValidStay(checkInDate, checkOutDate);
     if (!stay.ok) throw new BookingConflictError(stay.error, 'booking/invalid-stay');
 
-    const [nightsRes, roomsRes] = await Promise.all([
-      supabase
-        .from('room_nights')
-        .select('room_id,date,booking_id')
-        .eq('hotel_id', hotelId)
-        .gte('date', checkInDate)
-        .lt('date', checkOutDate),
-      supabase.from('rooms').select('*').eq('hotel_id', hotelId).order('room_number', { ascending: true }),
+    const [nights, roomsRaw] = await Promise.all([
+      fetchRows<{ roomId: string; date: string; bookingId: string }>('room_nights', {
+        hotelId,
+        filters: [
+          { column: 'date', value: checkInDate, op: 'gte' },
+          { column: 'date', value: checkOutDate, op: 'lt' },
+        ],
+      }),
+      fetchRows<Room>('rooms', { hotelId, orderBy: { column: 'room_number', ascending: true } }),
     ]);
-    if (nightsRes.error) throw new Error(nightsRes.error.message);
-    if (roomsRes.error) throw new Error(roomsRes.error.message);
 
     const taken = new Map<string, { bookingId: string; dates: string[] }>();
-    (nightsRes.data || []).forEach((n: any) => {
-      const entry = taken.get(n.room_id) || { bookingId: n.booking_id, dates: [] };
+    nights.forEach((n: any) => {
+      const entry = taken.get(n.roomId) || { bookingId: n.bookingId, dates: [] };
       entry.dates.push(n.date);
-      taken.set(n.room_id, entry);
+      taken.set(n.roomId, entry);
     });
 
-    const rooms = (roomsRes.data || []).map((r) => rowToObject<Room>(r) as Room);
+    const rooms = roomsRaw;
     return rooms
       .map((room) => {
         const conflict = taken.get(room.id);
@@ -441,31 +438,33 @@ export const firestoreService = {
       throw new BookingConflictError('Agreed rate must be a positive number.', 'booking/invalid-rate');
     }
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    const { data, error } = await supabase.rpc('create_booking', {
-      p_hotel_id: hotelId,
-      p_guest_id: guestId,
-      p_room_id: roomId,
-      p_room_type_id: roomTypeId,
-      p_check_in: checkInDate,
-      p_check_out: checkOutDate,
-      p_rate: agreedRate,
-      p_num_guests: numGuests,
-      p_source: source,
-      p_created_by: user?.id || 'unknown',
-    });
-
-    if (error) {
-      if (error.message.includes('booking/room-not-available')) {
+    const createdBy = await getCurrentUserId();
+    try {
+      const data = await rpc('create_booking', {
+        p_hotel_id: hotelId,
+        p_guest_id: guestId,
+        p_room_id: roomId,
+        p_room_type_id: roomTypeId,
+        p_check_in: checkInDate,
+        p_check_out: checkOutDate,
+        p_rate: agreedRate,
+        p_num_guests: numGuests,
+        p_source: source,
+        p_created_by: createdBy || 'unknown',
+      });
+      return data as string;
+    } catch (err: any) {
+      const message = err?.message || String(err);
+      const code = err?.code || '';
+      if (message.includes('booking/room-not-available') || code === 'booking/room-not-available') {
         // Fetch the conflicting nights for a precise message.
-        const { data: conflictNights } = await supabase
-          .from('room_nights')
-          .select('date')
-          .eq('room_id', roomId)
-          .gte('date', checkInDate)
-          .lt('date', checkOutDate);
+        const conflictNights = await fetchRows<{ date: string }>('room_nights', {
+          filters: [
+            { column: 'room_id', value: roomId },
+            { column: 'date', value: checkInDate, op: 'gte' },
+            { column: 'date', value: checkOutDate, op: 'lt' },
+          ],
+        });
         const dates = (conflictNights || []).map((n: any) => n.date).sort();
         throw new BookingConflictError(
           `Room is already booked for ${dates.length} of the requested night(s)` +
@@ -474,39 +473,35 @@ export const firestoreService = {
           dates
         );
       }
-      if (error.message.includes('booking/')) {
-        throw new BookingConflictError(error.message, error.message.split(' ')[0]);
+      if (message.includes('booking/') || code.startsWith('booking/')) {
+        throw new BookingConflictError(message, code.startsWith('booking/') ? code : message.split(' ')[0]);
       }
-      throw new Error(error.message);
+      throw new Error(message);
     }
-    return data as string;
   },
 
   checkInGuest: async (hotelId: string, bookingId: string, roomId: string): Promise<void> => {
     const now = new Date().toISOString();
-    const { error: bErr } = await supabase
-      .from('bookings')
-      .update({ status: 'CHECKED_IN' as BookingStatus, actual_check_in_at: now, actual_check_out_at: null })
-      .eq('id', bookingId)
-      .eq('hotel_id', hotelId);
-    if (bErr) throw new Error(bErr.message);
-    const { error: rErr } = await supabase
-      .from('rooms')
-      .update({ status: 'occupied' })
-      .eq('id', roomId)
-      .eq('hotel_id', hotelId);
-    if (rErr) throw new Error(rErr.message);
+    await updateWhere('bookings', [{ column: 'id', value: bookingId }, { column: 'hotel_id', value: hotelId }], {
+      status: 'CHECKED_IN' as BookingStatus,
+      actualCheckInAt: now,
+      actualCheckOutAt: null,
+    });
+    await updateWhere('rooms', [{ column: 'id', value: roomId }, { column: 'hotel_id', value: hotelId }], {
+      status: 'occupied',
+    });
   },
 
   checkOutGuest: async (hotelId: string, bookingId: string, roomId: string): Promise<void> => {
     const now = new Date().toISOString();
-    await supabase
-      .from('bookings')
-      .update({ status: 'CHECKED_OUT' as BookingStatus, actual_check_out_at: now })
-      .eq('id', bookingId)
-      .eq('hotel_id', hotelId);
+    await updateWhere('bookings', [{ column: 'id', value: bookingId }, { column: 'hotel_id', value: hotelId }], {
+      status: 'CHECKED_OUT' as BookingStatus,
+      actualCheckOutAt: now,
+    });
     // Room goes to cleaning — housekeeping clears it (matches Firestore behaviour).
-    await supabase.from('rooms').update({ status: 'cleaning' }).eq('id', roomId).eq('hotel_id', hotelId);
+    await updateWhere('rooms', [{ column: 'id', value: roomId }, { column: 'hotel_id', value: hotelId }], {
+      status: 'cleaning',
+    });
   },
 
   /** Releases room-night locks so the room can be resold. */
@@ -520,15 +515,16 @@ export const firestoreService = {
 
     // Delete locks, then update booking, then set room to cleaning if it was in-house.
     for (const date of nights) {
-      await supabase.from('room_nights').delete().eq('room_id', booking.roomId).eq('date', date);
+      await deleteWhere('room_nights', [
+        { column: 'room_id', value: booking.roomId },
+        { column: 'date', value: date },
+      ]);
     }
-    await supabase
-      .from('bookings')
-      .update({ status: 'CANCELLED' as BookingStatus })
-      .eq('id', bookingId)
-      .eq('hotel_id', hotelId);
+    await updateWhere('bookings', [{ column: 'id', value: bookingId }, { column: 'hotel_id', value: hotelId }], {
+      status: 'CANCELLED' as BookingStatus,
+    });
     if (wasCheckedIn) {
-      await supabase.from('rooms').update({ status: 'cleaning' }).eq('id', booking.roomId);
+      await updateWhere('rooms', [{ column: 'id', value: booking.roomId }], { status: 'cleaning' });
     }
   },
 
@@ -537,13 +533,14 @@ export const firestoreService = {
     if (!booking) throw new Error('Booking not found.');
     if (booking.status !== 'RESERVED') return;
     for (const date of enumerateNights(booking.checkInDate, booking.checkOutDate)) {
-      await supabase.from('room_nights').delete().eq('room_id', booking.roomId).eq('date', date);
+      await deleteWhere('room_nights', [
+        { column: 'room_id', value: booking.roomId },
+        { column: 'date', value: date },
+      ]);
     }
-    await supabase
-      .from('bookings')
-      .update({ status: 'NO_SHOW' as BookingStatus })
-      .eq('id', bookingId)
-      .eq('hotel_id', hotelId);
+    await updateWhere('bookings', [{ column: 'id', value: bookingId }, { column: 'hotel_id', value: hotelId }], {
+      status: 'NO_SHOW' as BookingStatus,
+    });
   },
 
   // ==========================================
@@ -581,6 +578,16 @@ export const firestoreService = {
    * post_guest_order_charge() RPC. Advisory — failures never block the order.
    */
   linkOrderCharge: async (orderId: string): Promise<{ linked: boolean; reason?: string }> => {
+    // Desktop edition: the whole call is local (/local/api/rpc/...).
+    if (isLocalMode()) {
+      try {
+        const data = await rpc('post_guest_order_charge', { orderId });
+        return { linked: !!data?.linked, reason: data?.reason };
+      } catch (err: any) {
+        return { linked: false, reason: err?.message || 'network-error' };
+      }
+    }
+
     const {
       data: { session },
     } = await supabase.auth.getSession();

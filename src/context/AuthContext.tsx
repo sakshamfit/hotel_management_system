@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../supabase/config';
+import { isLocalMode, localLogin, localLogout, localSession, getStaffToken } from '../services/local/localApi';
 import { firestoreService } from '../services/firestoreService';
 import { ensureGuestSession, clearGuestSessionCache, GuestSessionError } from '../services/guestSession';
 import type { GuestSessionInfo } from '../services/guestSession';
@@ -114,7 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Check URL token for Guest Room QR scan.
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    if (!isLocalMode() && !isSupabaseConfigured) return;
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
     if (urlToken) {
@@ -223,8 +224,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [signOutClient]
   );
 
-  // Subscribe to Supabase auth state.
+  // Subscribe to auth state.
   useEffect(() => {
+    // Desktop edition: the "session" lives in the local backend.
+    if (isLocalMode()) {
+      let mounted = true;
+      (async () => {
+        const sess = await localSession().catch(() => null);
+        if (!mounted) return;
+        if (sess?.user && sess.hotel) {
+          setUser({
+            id: sess.user.id,
+            hotelId: sess.user.hotelId || null,
+            name: sess.user.displayName || 'Hotel Owner',
+            email: sess.user.email || '',
+            phone: '',
+            role: 'hotel_admin' as UserRole,
+            token: getStaffToken() || '',
+          });
+          setHotel(sess.hotel);
+          setSelectedTenantIdState(sess.user.hotelId || null);
+          setActiveExperience('hotel_os');
+        } else {
+          setUser(null);
+          setHotel(null);
+          setGuestSession(null);
+          clearGuestSessionCache();
+          if (!new URLSearchParams(window.location.search).get('token')) setActiveExperience('login');
+        }
+        setIsLoading(false);
+      })();
+      return;
+    }
+
     // No credentials: App.tsx renders the setup screen, so never touch the
     // client (it is a stub whose methods throw by design).
     if (!isSupabaseConfigured) {
@@ -264,8 +296,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Guest portal: exchange the scanned room token for a room-scoped session.
   useEffect(() => {
-    if (!guestRoomToken || !isSupabaseConfigured) return;
-    if (firebaseUser && (firebaseUser as any).is_anonymous !== true) {
+    if (!guestRoomToken) return;
+    if (!isLocalMode() && !isSupabaseConfigured) return;
+    if (isLocalMode()) {
+      // Staff member previewing the guest portal keeps their own session.
+      if (getStaffToken()) {
+        setGuestSession(null);
+        setGuestSessionError(null);
+        return;
+      }
+    } else if (firebaseUser && (firebaseUser as any).is_anonymous !== true) {
       // A signed-in staff member previewing keeps their own session.
       setGuestSession(null);
       setGuestSessionError(null);
@@ -325,6 +365,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     setAuthError(null);
     try {
+      if (isLocalMode()) {
+        const res = await localLogin(email, pass);
+        setUser({
+          id: res.user.id,
+          hotelId: res.user.hotelId || null,
+          name: res.user.displayName || 'Hotel Owner',
+          email: res.user.email || '',
+          phone: '',
+          role: 'hotel_admin' as UserRole,
+          token: res.token,
+        });
+        setHotel(res.hotel);
+        setSelectedTenantIdState(res.user.hotelId || null);
+        setGuestSession(null);
+        clearGuestSessionCache();
+        setActiveExperience('hotel_os');
+        return;
+      }
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: pass.trim(),
@@ -349,6 +408,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Auth → URL Configuration → Redirect URLs, or Supabase drops the redirect.
    */
   const requestPasswordReset = async (email: string): Promise<void> => {
+    if (isLocalMode()) {
+      throw new Error('Password recovery by email is not available offline. Ask the seller for a new password, or sign in and change it from Settings.');
+    }
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${window.location.origin}/`,
     });
@@ -357,6 +419,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /** Exchanges a recovery link for a session (`detectSessionInUrl` is off). */
   const beginPasswordRecovery = async (): Promise<{ email: string }> => {
+    if (isLocalMode()) throw new Error('Password recovery links are not available offline.');
     if (!recoveryParams) throw new Error('No password reset link was detected.');
 
     setIsLoading(true);
@@ -405,6 +468,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginWithGoogle = async () => {
+    if (isLocalMode()) throw new Error('Google sign-in is not available in the Desktop Edition.');
     setIsLoading(true);
     try {
       const { error } = await supabase.auth.signInWithOAuth({
@@ -418,6 +482,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshClaims = async () => {
+    if (isLocalMode()) {
+      const sess = await localSession().catch(() => null);
+      setIsLoading(true);
+      if (sess?.user && sess.hotel) setHotel(sess.hotel);
+      setIsLoading(false);
+      return;
+    }
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user) {
       setIsLoading(true);
@@ -455,7 +526,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
-    await signOutClient();
+    if (isLocalMode()) {
+      await localLogout().catch(() => {});
+    } else {
+      await signOutClient();
+    }
     setGuestSession(null);
     clearGuestSessionCache();
     setAuthError(null);
@@ -481,7 +556,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSelectedTenantId,
         authError,
         clearAuthError,
-        configured: isSupabaseConfigured,
+        configured: isLocalMode() ? true : isSupabaseConfigured,
         recoveryParams,
         loginWithCredentials,
         requestPasswordReset,
